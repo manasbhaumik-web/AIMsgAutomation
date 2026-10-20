@@ -50,7 +50,7 @@ jobs:
       - name: Dependency audit (full report, informational)
         run: npm audit --omit=dev || true
       - name: Secret scan
-        uses: trufflesecurity/trufflehog@v3.82.13
+        uses: trufflesecurity/trufflehog@v3.99.2
         with:
           extra_args: --only-verified
 
