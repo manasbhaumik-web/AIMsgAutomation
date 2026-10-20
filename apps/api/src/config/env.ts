@@ -5,6 +5,8 @@ const schema = z.object({
   /** Reverse proxies in front of the API (nginx = 1). Without it every client shares the proxy's address for rate limiting. */
   TRUST_PROXY: z.coerce.number().int().min(0).max(5).default(0),
   PORT: z.coerce.number().default(3000),
+  /** Database connections per API instance. */
+  DB_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
   WEB_URL: z.string().default('http://localhost:5173'),
   DATABASE_URL: z.string().min(1),
   DATABASE_ADMIN_URL: z.string().optional(),

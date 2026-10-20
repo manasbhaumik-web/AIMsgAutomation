@@ -14,7 +14,7 @@ npm run create-admin -w apps/api -- you@example.com 'a-long-password'
 npm run dev -w apps/api              # API on :3000
 npm run dev -w apps/web              # web on :5173
 ```
-No Docker? `npm run verify` runs the real services against embedded Postgres. Checks: `npm run lint`, `npm run build`, `npm test`.
+No Docker? Run `node scripts/dev-db.mjs` (embedded Postgres + pgvector on port 5433, migrations and a dev admin included) and start the API with `DATABASE_URL=postgres://inbox_app@127.0.0.1:5433/postgres DB_POOL_MAX=1`. `npm run verify` runs the real services against embedded Postgres too. Checks: `npm run lint`, `npm run build`, `npm test`.
 
 ## Where things are
 | | |

@@ -23,7 +23,7 @@ export class Db implements OnModuleDestroy {
   readonly pool: Pool;
 
   constructor(@Inject(ENV) env: Env) {
-    this.pool = new Pool({ connectionString: env.DATABASE_URL, max: 10 });
+    this.pool = new Pool({ connectionString: env.DATABASE_URL, max: env.DB_POOL_MAX });
   }
 
   /** Runs fn in a transaction scoped to ctx. All data access goes through here. */
