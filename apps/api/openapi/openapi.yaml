@@ -1,0 +1,437 @@
+openapi: 3.0.3
+info:
+  title: Unified Inbox AI API
+  version: 1.0.0
+  description: |
+    Versioned REST API for the web client and the mobile apps. Every path is under `/api/v1`.
+
+    **Auth.** Sign in (`/auth/login`, `/auth/register`, or the OIDC code exchange) to receive a short-lived access token (15 minutes) and a rotating refresh token. Send `Authorization: Bearer <accessToken>`. Each refresh token works once: use the new one returned by `/auth/refresh`. Presenting an already-used refresh token revokes the whole session.
+
+    **Mobile sign-in with Google or Microsoft.** Open `/auth/oidc/{provider}/start` in the system browser (never an embedded web view) with your deep-link `redirectUri`, then post the returned `code` and `state` to `/auth/oidc/{provider}/exchange`. PKCE is handled by the server through the signed `state`.
+
+    **Sending is always confirmed.** `POST /drafts/{id}/send` and `POST /events/{id}/respond` require `confirm: true`; sends also require the `bodyHash` of the exact text shown to the person. Nothing the assistant produces is ever sent automatically.
+
+    **Errors.** JSON `{ statusCode, message }`, plus a stable `code` where the client should react (for example `ai_consent_required`, `thread_changed`, `draft_changed`, `send_blocked`). Rate limits answer 429.
+
+    **Streaming.** `POST /chat/conversations/{id}/messages` answers with Server-Sent Events (`token`, `citations`, `done`, `error`). Read it with `fetch`, not `EventSource` (which cannot send the bearer header). Validation, consent and ownership failures arrive as ordinary HTTP errors before the stream starts.
+
+    **Webhooks** (`/webhooks/*`) are provider-to-server callbacks and are not part of this client contract.
+servers:
+  - url: /api/v1
+security:
+  - bearer: []
+tags:
+  - { name: auth }
+  - { name: me }
+  - { name: accounts }
+  - { name: inbox }
+  - { name: ai }
+  - { name: replies }
+  - { name: calendar }
+  - { name: notifications }
+  - { name: admin }
+  - { name: ops }
+paths:
+  /health:
+    get: { tags: [ops], summary: Liveness, security: [], responses: { '200': { description: OK } } }
+  /health/ready:
+    get: { tags: [ops], summary: Readiness (database reachable), security: [], responses: { '200': { description: Ready }, '503': { $ref: '#/components/responses/Error' } } }
+
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Create an account with email and password (12+ characters)
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Credentials' } } } }
+      responses: { '201': { description: Signed in, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '409': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Sign in
+      security: []
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Login' } } } }
+      responses: { '200': { description: Signed in, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '401': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' } }
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Exchange a refresh token for a new session (rotates the refresh token)
+      description: "Apps send `refreshToken` in the body. Browsers send an empty body with the header `x-client: web`; the refresh token then travels in an HttpOnly, SameSite=Strict cookie (`inbox_rt`, path `/api/v1/auth`) that scripts cannot read, and is never present in response bodies. Each refresh token works once."
+      security: []
+      requestBody: { content: { application/json: { schema: { type: object, properties: { refreshToken: { type: string } } } } } }
+      responses: { '200': { description: New session, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } }, '401': { $ref: '#/components/responses/Error' } }
+  /auth/logout:
+    post: { tags: [auth], summary: End this session, responses: { '204': { description: Signed out } } }
+  /auth/oidc/{provider}/start:
+    get:
+      tags: [auth]
+      summary: Start Google or Microsoft sign-in
+      security: []
+      parameters:
+        - { name: provider, in: path, required: true, schema: { type: string, enum: [google, microsoft] } }
+        - { name: redirectUri, in: query, required: true, schema: { type: string, format: uri } }
+      responses: { '200': { description: Provider consent URL to open in the system browser, content: { application/json: { schema: { type: object, properties: { url: { type: string } } } } } } }
+  /auth/oidc/{provider}/exchange:
+    post:
+      tags: [auth]
+      summary: Finish sign-in with the code and state from the redirect
+      security: []
+      parameters: [{ name: provider, in: path, required: true, schema: { type: string, enum: [google, microsoft] } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [code, state], properties: { code: { type: string }, state: { type: string }, deviceName: { type: string } } } } } }
+      responses: { '200': { description: Signed in, content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } } } }
+
+  /me:
+    get: { tags: [me], summary: Current user, responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } } } }
+    delete:
+      tags: [me]
+      summary: Delete my account and all my data (erasure)
+      description: Revokes provider access where possible and deletes everything. Type the account email again; accounts with a password must also send it. Refused (409 `last_admin` / `last_tenant_admin`) when it would leave a workspace without an administrator.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [confirmEmail], properties: { confirmEmail: { type: string, format: email }, password: { type: string } } } } } }
+      responses: { '204': { description: Deleted }, '400': { $ref: '#/components/responses/Error' }, '403': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+  /me/export:
+    get:
+      tags: [me]
+      summary: Download everything we hold about me (newline-delimited JSON)
+      description: One JSON object per line, `{ section, data }`. Provider tokens, password hashes and embeddings are not included. Limited to 3 per hour.
+      responses: { '200': { description: Export stream, content: { application/x-ndjson: { schema: { type: string } } } }, '429': { $ref: '#/components/responses/Error' } }
+  /me/sessions:
+    get: { tags: [me], summary: My signed-in devices, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { type: object, additionalProperties: true } } } } } } }
+  /me/sessions/{id}:
+    delete: { tags: [me], summary: Sign a device out, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '204': { description: Revoked } } }
+  /me/ai:
+    get: { tags: [ai], summary: AI settings (consent and digest schedule), responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { aiProcessing: { type: boolean }, digest: { type: object, additionalProperties: true } } } } } } } }
+  /me/consents:
+    put:
+      tags: [ai]
+      summary: Turn AI features on or off
+      description: Off by default. Turning off erases derived AI data unless `eraseDerived` is false.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [aiProcessing], properties: { aiProcessing: { type: boolean }, eraseDerived: { type: boolean, default: true } } } } } }
+      responses: { '200': { description: OK } }
+  /me/ai-data:
+    delete: { tags: [ai], summary: Erase all AI-derived data now, responses: { '204': { description: Erased } } }
+  /me/digest-schedule:
+    put:
+      tags: [ai]
+      summary: When to prepare the daily digest
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [enabled, hour, timezone], properties: { enabled: { type: boolean }, hour: { type: integer, minimum: 0, maximum: 23 }, timezone: { type: string, example: Asia/Singapore } } } } } }
+      responses: { '200': { description: OK } }
+
+  /accounts/channels:
+    get: { tags: [accounts], summary: Channels this server can connect, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Channel' } } } } } } }
+  /accounts:
+    get: { tags: [accounts], summary: Connected accounts, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Account' } } } } } } }
+  /accounts/{channel}/connect:
+    post:
+      tags: [accounts]
+      summary: Start connecting an account (returns the provider consent URL)
+      description: "Read-only access by default. `write: true` also asks for the permission to send replies or answer invitations; nothing is ever sent without a separate confirmation."
+      parameters: [{ name: channel, in: path, required: true, schema: { $ref: '#/components/schemas/ChannelId' } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [redirectUri], properties: { redirectUri: { type: string, format: uri }, write: { type: boolean, default: false } } } } } }
+      responses: { '200': { description: Open this URL in the system browser, content: { application/json: { schema: { type: object, properties: { url: { type: string } } } } } } }
+  /accounts/callback:
+    post:
+      tags: [accounts]
+      summary: Finish connecting with the code and state from the redirect
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [code, state], properties: { code: { type: string }, state: { type: string } } } } } }
+      responses: { '200': { description: Connected, content: { application/json: { schema: { $ref: '#/components/schemas/Account' } } } } }
+  /accounts/{id}:
+    patch:
+      tags: [accounts]
+      summary: Pause or resume, change the import window, switch AI on or off for this account
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { paused: { type: boolean }, backfillDays: { type: integer, minimum: 1, maximum: 365 }, aiEnabled: { type: boolean } } } } } }
+      responses: { '200': { description: OK } }
+    delete:
+      tags: [accounts]
+      summary: Disconnect an account
+      parameters: [{ $ref: '#/components/parameters/Id' }, { name: deleteData, in: query, schema: { type: string, enum: ['true', 'false'], default: 'false' } }]
+      responses: { '204': { description: Disconnected } }
+
+  /inbox:
+    get: { tags: [inbox], summary: Channels and accounts with unread counts, responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { channels: { type: array, items: { type: object, additionalProperties: true } } } } } } } } }
+  /inbox/threads:
+    get:
+      tags: [inbox]
+      summary: Conversations, newest first
+      parameters:
+        - { name: accountId, in: query, schema: { type: string, format: uuid } }
+        - { name: channel, in: query, schema: { type: string, enum: [gmail, outlook, slack, teams, whatsapp] } }
+        - { name: unreadOnly, in: query, schema: { type: string, enum: ['true', 'false'] } }
+        - { name: priority, in: query, schema: { type: string, enum: [urgent, needs_reply, fyi, low] } }
+        - { name: topicId, in: query, schema: { type: string, format: uuid } }
+        - { name: before, in: query, description: Cursor from `nextBefore`, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { threads: { type: array, items: { $ref: '#/components/schemas/ThreadRow' } }, nextBefore: { type: string, format: date-time, nullable: true } } } } } } }
+  /threads/{id}:
+    get: { tags: [inbox], summary: One conversation with all its messages, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ThreadDetail' } } } }, '404': { $ref: '#/components/responses/Error' } } }
+  /threads/{id}/read:
+    post: { tags: [inbox], summary: Mark a conversation read or unread, parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [read], properties: { read: { type: boolean } } } } } }, responses: { '200': { description: OK } } }
+  /messages/{id}/read:
+    post: { tags: [inbox], summary: Mark one message read or unread, parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [read], properties: { read: { type: boolean } } } } } }, responses: { '200': { description: OK } } }
+  /topics:
+    get: { tags: [inbox], summary: Topics with conversation counts, responses: { '200': { description: OK, content: { application/json: { schema: { type: array, items: { type: object, properties: { id: { type: string }, name: { type: string }, threads: { type: integer } } } } } } } } }
+  /action-items:
+    get: { tags: [ai], summary: Action items found in conversations, parameters: [{ name: status, in: query, schema: { type: string, enum: [open, done], default: open } }], responses: { '200': { description: OK } } }
+  /action-items/{id}:
+    patch: { tags: [ai], summary: Mark an action item done or open, parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [done], properties: { done: { type: boolean } } } } } }, responses: { '200': { description: OK } } }
+
+  /summaries:
+    post:
+      tags: [ai]
+      summary: Summarize a conversation, a channel or a topic (needs AI features on)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { type: object, required: [scope, threadId], properties: { scope: { type: string, enum: [thread] }, threadId: { type: string, format: uuid }, refresh: { type: boolean } } }
+                - { type: object, required: [scope], properties: { scope: { type: string, enum: [channel] }, channel: { type: string }, accountId: { type: string, format: uuid }, days: { type: integer, minimum: 1, maximum: 30 }, refresh: { type: boolean } } }
+                - { type: object, required: [scope, topicId], properties: { scope: { type: string, enum: [topic] }, topicId: { type: string, format: uuid }, refresh: { type: boolean } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { text: { type: string }, cached: { type: boolean }, model: { type: string, nullable: true } } } } } }, '403': { $ref: '#/components/responses/Error' } }
+  /digests:
+    post: { tags: [ai], summary: Prepare today's digest now, requestBody: { content: { application/json: { schema: { type: object } } } }, responses: { '200': { description: OK } } }
+  /digests/latest:
+    get: { tags: [ai], summary: The most recent digest, responses: { '200': { description: OK } } }
+  /chat/conversations:
+    get: { tags: [ai], summary: My assistant conversations, responses: { '200': { description: OK } } }
+    post: { tags: [ai], summary: Start an assistant conversation, responses: { '201': { description: Created } } }
+  /chat/conversations/{id}:
+    get: { tags: [ai], summary: A conversation with its turns, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK } } }
+    delete: { tags: [ai], summary: Delete a conversation, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '204': { description: Deleted } } }
+  /chat/conversations/{id}/messages:
+    post:
+      tags: [ai]
+      summary: Ask the assistant (streams the answer)
+      description: The assistant only reads your messages and calendar. It has no tools and cannot send, delete or change anything. Answers cite their sources as `[M1]`/`[E1]`, delivered in the `citations` event.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [content], properties: { content: { type: string, minLength: 1, maxLength: 2000 } } } } } }
+      responses:
+        '200': { description: 'Server-Sent Events: `token` {text}, `citations` {citations[]}, `done` {turnId}, `error` {code,message}', content: { text/event-stream: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /threads/{id}/draft:
+    get: { tags: [replies], summary: The open draft for a conversation (or null), parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { draft: { allOf: [{ $ref: '#/components/schemas/Draft' }], nullable: true } } } } } } } }
+    put:
+      tags: [replies]
+      summary: Save my own draft text (replaces the open draft)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [body], properties: { body: { type: string, minLength: 1, maxLength: 4000 } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { draft: { $ref: '#/components/schemas/Draft' } } } } } } }
+    delete: { tags: [replies], summary: Discard the draft, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '204': { description: Discarded } } }
+  /threads/{id}/draft/ai:
+    post:
+      tags: [replies]
+      summary: Ask the assistant to write a draft (saved, never sent)
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { content: { application/json: { schema: { type: object, properties: { instructions: { type: string, maxLength: 500 } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { draft: { $ref: '#/components/schemas/Draft' } } } } } }, '403': { $ref: '#/components/responses/Error' } }
+  /drafts/{id}/preview:
+    get: { tags: [replies], summary: What the confirmation screen shows (recipient, channel, exact text, hash), parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Draft' } } } } } }
+  /drafts/{id}/send:
+    post:
+      tags: [replies]
+      summary: Send the reply the person just reviewed
+      description: "Requires `confirm: true` and the `bodyHash` of the text that was displayed. Never retried automatically. 409 codes - `draft_changed`, `thread_changed` (set `acceptNewMessages` after the person read the newer message), `send_blocked`, `send_failed`, `not_sendable`, `send_in_progress`."
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [confirm, bodyHash], properties: { confirm: { type: boolean, enum: [true] }, bodyHash: { type: string, pattern: '^[0-9a-f]{64}$' }, acceptNewMessages: { type: boolean, default: false } } } } } }
+      responses: { '200': { description: Sent, content: { application/json: { schema: { type: object, properties: { draft: { $ref: '#/components/schemas/Draft' } } } } } }, '400': { $ref: '#/components/responses/Error' }, '409': { $ref: '#/components/responses/Error' } }
+
+  /calendar/events:
+    get: { tags: [calendar], summary: Events in a window, parameters: [{ name: from, in: query, schema: { type: string, format: date-time } }, { name: to, in: query, schema: { type: string, format: date-time } }], responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { events: { type: array, items: { $ref: '#/components/schemas/Event' } } } } } } } } }
+  /calendar/suggest-times:
+    post:
+      tags: [calendar]
+      summary: Free slots for a meeting, from my own calendars (reads only)
+      requestBody: { content: { application/json: { schema: { type: object, properties: { durationMin: { type: integer, minimum: 15, maximum: 240, default: 30 }, days: { type: integer, minimum: 1, maximum: 14, default: 7 }, timezone: { type: string, default: UTC }, dayStartHour: { type: integer, default: 9 }, dayEndHour: { type: integer, default: 17 }, includeWeekends: { type: boolean, default: false }, bufferMin: { type: integer, default: 15 }, limit: { type: integer, default: 5 }, maxPerDay: { type: integer, default: 2 } } } } } }
+      responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { slots: { type: array, items: { type: object, properties: { start: { type: string, format: date-time }, end: { type: string, format: date-time } } } } } } } } } }
+  /events/{id}/respond:
+    post:
+      tags: [calendar]
+      summary: Accept, decline or tentatively accept an invitation
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [confirm, response], properties: { confirm: { type: boolean, enum: [true] }, response: { type: string, enum: [accept, decline, tentative] }, comment: { type: string, maxLength: 500 } } } } } }
+      responses: { '204': { description: Sent }, '409': { $ref: '#/components/responses/Error' } }
+
+  /notifications:
+    get: { tags: [notifications], summary: Notification feed and unread count, responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { unread: { type: integer }, items: { type: array, items: { $ref: '#/components/schemas/Notification' } } } } } } } } }
+  /notifications/read:
+    post: { tags: [notifications], summary: Mark notifications read, requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { ids: { type: array, items: { type: integer } }, all: { type: boolean } } } } } }, responses: { '204': { description: OK } } }
+  /notifications/settings:
+    get: { tags: [notifications], summary: Preferences, registered phones, whether push is available, responses: { '200': { description: OK } } }
+    put:
+      tags: [notifications]
+      summary: Change preferences
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [minPriority, showPreview, quietStart, quietEnd, timezone], properties: { minPriority: { type: string, enum: [off, urgent, needs_reply, all] }, showPreview: { type: boolean }, quietStart: { type: integer, nullable: true }, quietEnd: { type: integer, nullable: true }, timezone: { type: string } } } } } }
+      responses: { '200': { description: OK } }
+  /notifications/devices:
+    post:
+      tags: [notifications]
+      summary: Register this phone's Firebase Cloud Messaging token
+      description: Call after every sign-in and whenever Firebase rotates the token. Android and iOS both use FCM.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string }, label: { type: string } } } } } }
+      responses: { '200': { description: Registered, content: { application/json: { schema: { type: object, properties: { id: { type: string } } } } } } }
+  /notifications/devices/{id}:
+    delete: { tags: [notifications], summary: Forget a phone (call on sign-out), parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '204': { description: Removed } } }
+
+  /admin/llm/providers:
+    get: { tags: [admin], summary: AI providers (keys are never returned), responses: { '200': { description: OK } } }
+    post: { tags: [admin], summary: Add a provider, requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { '201': { description: Created } } }
+  /admin/llm/providers/{id}:
+    patch: { tags: [admin], summary: Update a provider, parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { '200': { description: OK } } }
+    delete: { tags: [admin], summary: Remove a provider, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '204': { description: Removed } } }
+  /admin/llm/providers/{id}/test:
+    post: { tags: [admin], summary: Check that a provider key works, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK } } }
+  /admin/llm/routes:
+    get: { tags: [admin], summary: Which provider and model each task uses, responses: { '200': { description: OK } } }
+  /admin/llm/routes/{task}:
+    put: { tags: [admin], summary: Set the route for a task, parameters: [{ name: task, in: path, required: true, schema: { type: string, enum: [classify, topic-tag, summarize, digest, chat, draft-reply, embed] } }], requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { '200': { description: OK } } }
+  /admin/prompts:
+    get: { tags: [admin], summary: Prompt templates and versions, responses: { '200': { description: OK } } }
+    post: { tags: [admin], summary: Add a prompt version, requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { '201': { description: Created } } }
+  /admin/prompts/{id}/activate:
+    post: { tags: [admin], summary: Make a prompt version the active one, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK } } }
+  /admin/quotas:
+    get: { tags: [admin], summary: Token quotas, responses: { '200': { description: OK } } }
+    put: { tags: [admin], summary: Set a quota, requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { '200': { description: OK } } }
+  /admin/usage:
+    get: { tags: [admin], summary: AI usage and cost, responses: { '200': { description: OK } } }
+  /admin/audit:
+    get: { tags: [admin], summary: Audit log, responses: { '200': { description: OK } } }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    Error:
+      type: object
+      properties:
+        statusCode: { type: integer }
+        message: { oneOf: [{ type: string }, { type: array, items: { type: string } }] }
+        code: { type: string, description: Stable machine-readable reason when the client should react }
+    ChannelId: { type: string, enum: [gmail, google_calendar, outlook, microsoft_calendar, slack, teams, whatsapp, linkedin] }
+    Credentials:
+      type: object
+      required: [email, password]
+      properties: { email: { type: string, format: email }, password: { type: string, minLength: 12 }, name: { type: string }, deviceName: { type: string } }
+    Login:
+      type: object
+      required: [email, password]
+      properties: { email: { type: string, format: email }, password: { type: string }, deviceName: { type: string } }
+    User:
+      type: object
+      properties: { id: { type: string, format: uuid }, email: { type: string }, name: { type: string, nullable: true }, role: { type: string, enum: [admin, user] } }
+    Session:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string, description: Present for apps; browsers receive it as an HttpOnly cookie instead }
+        expiresIn: { type: integer, description: Seconds until the access token expires }
+        user: { $ref: '#/components/schemas/User' }
+    Channel:
+      type: object
+      properties:
+        id: { $ref: '#/components/schemas/ChannelId' }
+        displayName: { type: string }
+        notice: { type: string, nullable: true, description: A limitation to show next to the channel }
+        capabilities: { type: object, properties: { read: { type: boolean }, send: { type: boolean }, calendar: { type: boolean }, realtime: { type: boolean } } }
+    Account:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        channel: { $ref: '#/components/schemas/ChannelId' }
+        external_id: { type: string }
+        display_name: { type: string, nullable: true }
+        status: { type: string, enum: [active, paused, reauth, error, revoked] }
+        last_sync_at: { type: string, format: date-time, nullable: true }
+        last_error: { type: string, nullable: true }
+        ai_enabled: { type: boolean }
+        backfill_days: { type: integer }
+        unread: { type: integer }
+        can_send: { type: boolean, description: Reply sending was allowed when connecting }
+        can_respond: { type: boolean, description: Answering invitations was allowed when connecting }
+    Party:
+      type: object
+      properties: { name: { type: string }, email: { type: string }, handle: { type: string, description: Slack user id or phone number } }
+    ThreadRow:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        channel: { $ref: '#/components/schemas/ChannelId' }
+        subject: { type: string, nullable: true }
+        last_message_at: { type: string, format: date-time }
+        message_count: { type: integer }
+        unread: { type: integer }
+        last_sender: { allOf: [{ $ref: '#/components/schemas/Party' }], nullable: true }
+        snippet: { type: string, nullable: true }
+        priority: { type: string, enum: [urgent, needs_reply, fyi, low], nullable: true }
+        topics: { type: array, items: { type: object, properties: { id: { type: string }, name: { type: string } } } }
+    Message:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        sender: { allOf: [{ $ref: '#/components/schemas/Party' }], nullable: true }
+        recipients: { type: object, properties: { to: { type: array, items: { $ref: '#/components/schemas/Party' } }, cc: { type: array, items: { $ref: '#/components/schemas/Party' } } } }
+        body_text: { type: string }
+        body_html_sanitized: { type: string, nullable: true, description: Already sanitized; render only in a sandboxed view without scripts }
+        attachments_meta: { type: array, items: { type: object, properties: { name: { type: string }, size: { type: integer } } } }
+        timestamp: { type: string, format: date-time }
+        direction: { type: string, enum: [inbound, outbound] }
+        is_read: { type: boolean }
+    ThreadDetail:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        subject: { type: string, nullable: true }
+        priority: { type: string, nullable: true }
+        topics: { type: array, items: { type: object, properties: { id: { type: string }, name: { type: string } } } }
+        action_items: { type: array, items: { type: object, properties: { id: { type: string }, text: { type: string }, due_at: { type: string, nullable: true }, status: { type: string, enum: [open, done] } } } }
+        messages: { type: array, items: { $ref: '#/components/schemas/Message' } }
+    Draft:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        threadId: { type: string, format: uuid }
+        channel: { $ref: '#/components/schemas/ChannelId' }
+        body: { type: string }
+        bodyHash: { type: string, description: Send this back to confirm the exact text }
+        source: { type: string, enum: [ai, user] }
+        status: { type: string, enum: [draft, sending, sent, failed, discarded] }
+        error: { type: string, nullable: true }
+        stale: { type: boolean, description: A newer message arrived after the draft was written }
+        canSend: { type: boolean }
+        blockedReason: { type: string, nullable: true }
+        to: { type: array, items: { $ref: '#/components/schemas/Party' }, description: Exactly who receives it, derived by the server }
+        subject: { type: string, nullable: true }
+        accountLabel: { type: string }
+    Event:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        channel: { $ref: '#/components/schemas/ChannelId' }
+        title: { type: string }
+        start_at: { type: string, format: date-time }
+        end_at: { type: string, format: date-time }
+        all_day: { type: boolean }
+        location: { type: string, nullable: true }
+        meeting_link: { type: string, nullable: true }
+        status: { type: string, enum: [confirmed, tentative, cancelled] }
+        attendees: { type: array, items: { type: object, additionalProperties: true } }
+    Notification:
+      type: object
+      properties:
+        id: { type: integer }
+        kind: { type: string, enum: [new_message] }
+        channel: { type: string, nullable: true }
+        priority: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        read_at: { type: string, format: date-time, nullable: true }
+        thread_id: { type: string, format: uuid, nullable: true }
+        subject: { type: string, nullable: true }

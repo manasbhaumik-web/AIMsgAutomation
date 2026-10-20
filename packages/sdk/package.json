@@ -1,0 +1,21 @@
+{
+  "name": "@inbox/sdk",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TypeScript client for the Unified Inbox API (web and React Native). Types are generated from apps/api/openapi/openapi.yaml.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "generate": "openapi-typescript ../../apps/api/openapi/openapi.yaml -o src/schema.ts",
+    "check-generated": "openapi-typescript ../../apps/api/openapi/openapi.yaml -o .schema.check.ts && node -e \"const fs=require('fs');const a=fs.readFileSync('src/schema.ts','utf8'),b=fs.readFileSync('.schema.check.ts','utf8');fs.unlinkSync('.schema.check.ts');if(a!==b){console.error('src/schema.ts is out of date: run npm run generate -w packages/sdk');process.exit(1)}\"",
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test dist/index.test.js",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.4.0",
+    "typescript": "^5.5.4",
+    "@types/node": "^22.5.0"
+  }
+}

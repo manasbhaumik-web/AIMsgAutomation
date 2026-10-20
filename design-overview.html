@@ -1,0 +1,149 @@
+<title>Unified Inbox Design</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: single reading column, sticky section nav, tables for channel/risk data */
+:root{
+  --bg:#f6f7f5; --surface:#ffffff; --fg:#1b2420; --muted:#5a665f; --line:#d9dfdb;
+  --accent:#1f6f5c; --accent-soft:#e0efe9; --warn:#a4560f; --warn-soft:#f8e9d6;
+  --display:'Fraunces',Georgia,serif; --body:'IBM Plex Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#101613; --surface:#18201c; --fg:#e6ece8; --muted:#9aa8a0; --line:#2b3630;
+  --accent:#5fc3a6; --accent-soft:#17302a; --warn:#e8a864; --warn-soft:#34261a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#101613; --surface:#18201c; --fg:#e6ece8; --muted:#9aa8a0; --line:#2b3630;
+  --accent:#5fc3a6; --accent-soft:#17302a; --warn:#e8a864; --warn-soft:#34261a; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.6;padding-inline:16px}
+.wrap{max-width:860px;margin:0 auto;padding-block:40px 64px}
+h1,h2,h3{font-family:var(--display);font-weight:600;text-wrap:balance;line-height:1.2}
+h1{font-size:clamp(2rem,6vw,2.9rem);margin:0 0 12px}
+h2{font-size:1.6rem;margin:0 0 12px}
+h3{font-size:1.1rem;margin:20px 0 6px}
+.lede{font-size:1.1rem;color:var(--muted);max-width:62ch;margin:0 0 20px}
+.tag{display:inline-block;font:500 .75rem var(--mono);letter-spacing:.06em;text-transform:uppercase;background:var(--accent-soft);color:var(--accent);padding:3px 10px;border-radius:99px}
+nav{position:sticky;top:env(safe-area-inset-top,0px);background:var(--bg);border-bottom:1px solid var(--line);padding:10px 0;display:flex;gap:6px 16px;flex-wrap:wrap;font-size:.9rem;z-index:2}
+nav a{color:var(--muted);text-decoration:none}
+nav a:hover,nav a:focus-visible{color:var(--accent);outline:none;text-decoration:underline}
+section{padding-top:36px}
+p,li{max-width:68ch}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:.9rem}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:500 .72rem var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+tr:last-child td{border-bottom:0}
+code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);padding:1px 5px;border-radius:3px}
+.decided{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:0;padding:0;list-style:none}
+.decided li{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:12px 14px;max-width:none}
+.decided b{display:block;font:500 .72rem var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.pill{font:500 .72rem var(--mono);padding:2px 8px;border-radius:99px;background:var(--warn-soft);color:var(--warn);white-space:nowrap}
+pre.mermaid{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto}
+.phases{counter-reset:p;padding:0;list-style:none;display:grid;gap:8px}
+.phases li{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:10px 14px;max-width:none}
+.phases b{font-family:var(--mono);color:var(--accent)}
+@media (prefers-reduced-motion:no-preference){a{transition:color .15s}}
+</style>
+
+<div class="wrap">
+<span class="tag">Phase 0 · design only</span>
+<h1>Unified Inbox AI Service</h1>
+<p class="lede">One place for a user's mail, calendar and chats, sorted by channel and topic, summarised, and searchable through an assistant that drafts replies but never sends without a click.</p>
+
+<nav aria-label="Sections">
+<a href="#decided">Decisions</a><a href="#arch">Architecture</a><a href="#channels">Channels</a><a href="#llm">LLM gateway</a><a href="#security">Security</a><a href="#risks">Risks</a><a href="#phases">Phases</a>
+</nav>
+
+<section id="decided">
+<h2>What is decided</h2>
+<ul class="decided">
+<li><b>Backend</b>NestJS (TypeScript), modular monolith</li>
+<li><b>Data</b>PostgreSQL + pgvector with row-level security; Redis + BullMQ</li>
+<li><b>Web client</b>Vite + React + TypeScript</li>
+<li><b>App login</b>Email, Google and Microsoft from day one</li>
+<li><b>LLM providers</b>Anthropic first, then Gemini, OpenAI, Grok</li>
+<li><b>Embeddings</b>Hosted model through the gateway, no local model</li>
+<li><b>Scale</b>Under 1,000 users; individuals and small orgs</li>
+<li><b>Infrastructure</b>Docker Compose only; cloud chosen in Phase 6</li>
+</ul>
+</section>
+
+<section id="arch">
+<h2>Architecture</h2>
+<p>Seven modules share one deployable: Auth, Connectors, Ingestion, AI, Chat, Notifications and Admin. Each owns its tables and talks to the others through service interfaces, so any of them can be split out later.</p>
+<pre class="mermaid">
+flowchart LR
+  C[Web, Android, iOS] -->|REST + SSE| API[NestJS API]
+  X[Gmail, Graph, Slack, WhatsApp] -->|signed webhooks| API
+  API --> CONN[Connectors] --> ING[Ingestion] --> AI[AI + LLM gateway]
+  API --> CHAT[Chat / RAG] --> AI
+  AI --> LLM[Anthropic, Gemini, OpenAI, Grok]
+  API --- DB[(Postgres + pgvector, RLS)]
+  API --- R[(Redis + BullMQ)]
+</pre>
+<h3>Replies are never automatic</h3>
+<p>The assistant stores a draft. Only an authenticated "send" call on that draft reaches the connector, and every send is written to the audit log.</p>
+</section>
+
+<section id="channels">
+<h2>Channels</h2>
+<p>Every channel is a plugin behind one <code>ChannelConnector</code> interface and normalises into the same message and event models.</p>
+<div class="scroll"><table>
+<tr><th>Channel</th><th>Route</th><th>Sync</th><th>Limit</th></tr>
+<tr><td>Gmail</td><td>Gmail API, OAuth</td><td>History cursor, Pub/Sub push</td><td>Restricted scopes need Google verification and a CASA assessment</td></tr>
+<tr><td>Google Calendar</td><td>Calendar API</td><td>Sync token, watch channels</td><td>Channels expire and are renewed</td></tr>
+<tr><td>Outlook mail</td><td>Microsoft Graph</td><td>Delta queries, change notifications</td><td>Subscriptions expire in days</td></tr>
+<tr><td>Microsoft Calendar</td><td>Microsoft Graph</td><td>Delta, notifications</td><td>Same renewal job</td></tr>
+<tr><td>Teams</td><td>Graph chats and channels</td><td>Delta polling fallback</td><td><span class="pill">approval</span> Protected APIs, tenant admin consent</td></tr>
+<tr><td>Slack</td><td>OAuth v2 user token</td><td>Events API, history</td><td>Rate tiers</td></tr>
+<tr><td>WhatsApp</td><td>Business Cloud API</td><td>Webhooks</td><td><span class="pill">limit</span> Business numbers only; no personal accounts</td></tr>
+<tr><td>LinkedIn</td><td>Sign-in only</td><td>None</td><td><span class="pill">limit</span> Messaging is partner-only; feature-flagged stub</td></tr>
+</table></div>
+</section>
+
+<section id="llm">
+<h2>LLM gateway</h2>
+<p>Business code asks for a task such as <code>summarize</code>, never a vendor. The admin maps each task to a provider and model, with retries, a fallback route, quotas, redaction of emails, phone numbers and IDs before prompts, and a per-channel "AI off" switch. Prompt templates are versioned in the database.</p>
+<div class="scroll"><table>
+<tr><th>Task</th><th>Model tier</th></tr>
+<tr><td><code>classify</code>, <code>topic-tag</code></td><td>Small and fast</td></tr>
+<tr><td><code>summarize</code></td><td>Mid</td></tr>
+<tr><td><code>chat</code>, <code>draft-reply</code></td><td>Strongest</td></tr>
+<tr><td><code>embed</code></td><td>Hosted embedding model</td></tr>
+</table></div>
+</section>
+
+<section id="security">
+<h2>Security and privacy</h2>
+<ul>
+<li>Row-level security in Postgres, set per request, so one user cannot read another's rows even if application code is wrong.</li>
+<li>OAuth tokens and provider keys use envelope encryption and never appear in logs.</li>
+<li>Every webhook signature is verified before parsing (Slack, Microsoft Graph, Meta, Google Pub/Sub).</li>
+<li>Consent, export and hard delete support Malaysia PDPA and GDPR. A legal review is advised before launch.</li>
+<li>A tenant-isolation test suite runs in CI, including a vector-search leakage test.</li>
+</ul>
+</section>
+
+<section id="risks">
+<h2>Risks to plan around</h2>
+<div class="scroll"><table>
+<tr><th>Risk</th><th>Handling</th></tr>
+<tr><td>Google restricted-scope verification delays public launch</td><td>Build with test users; budget for the CASA assessment</td></tr>
+<tr><td>Teams needs Microsoft approval and admin consent</td><td>Delta polling fallback; document consent steps</td></tr>
+<tr><td>Webhook subscriptions expire silently</td><td>Renewal jobs, alerts, polling backstop</td></tr>
+<tr><td>Prompt injection through message text</td><td>Message text treated as data; drafts only; confirm to send</td></tr>
+<tr><td>LLM cost and sending mail to third parties</td><td>Quotas, redaction, per-channel AI off</td></tr>
+</table></div>
+</section>
+
+<section id="phases">
+<h2>Phases</h2>
+<ol class="phases">
+<li><b>0</b> Design (done, awaiting approval)</li>
+<li><b>1</b> Foundation: repo, Docker, Postgres with RLS, auth, admin skeleton, gateway with Claude, CI</li>
+<li><b>2</b> Gmail, Google Calendar, Outlook, Microsoft Calendar and the web inbox</li>
+<li><b>3</b> Embeddings, tags, summaries, digest, RAG chat with citations</li>
+<li><b>4</b> Slack, Teams, WhatsApp Business, LinkedIn stub</li>
+<li><b>5</b> Draft-and-confirm replies, calendar actions, push</li>
+<li><b>6</b> Load and security review, export and delete flows, SDK, deployment</li>
+</ol>
+</section>
+</div>

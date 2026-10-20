@@ -1,0 +1,62 @@
+groups:
+  - name: inbox
+    rules:
+      - alert: ApiDown
+        expr: up{job="inbox-api"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations: { summary: "The API is not answering scrapes", runbook: "docs/ops-runbook.md#api-down" }
+
+      - alert: HighServerErrorRate
+        expr: sum(rate(inbox_http_request_duration_seconds_count{status=~"5.."}[5m])) / sum(rate(inbox_http_request_duration_seconds_count[5m])) > 0.02
+        for: 10m
+        labels: { severity: page }
+        annotations: { summary: "More than 2% of requests fail with 5xx", runbook: "docs/ops-runbook.md#high-error-rate" }
+
+      - alert: SlowRequests
+        expr: histogram_quantile(0.95, sum by (le) (rate(inbox_http_request_duration_seconds_bucket{route!~".*/messages|.*/export"}[5m]))) > 2
+        for: 15m
+        labels: { severity: warn }
+        annotations: { summary: "p95 latency above 2 seconds (streaming and export excluded)" }
+
+      - alert: SyncFallingBehind
+        expr: inbox_oldest_sync_age_seconds > 900
+        for: 10m
+        labels: { severity: warn }
+        annotations: { summary: "An active account has not synced for over 15 minutes", runbook: "docs/ops-runbook.md#sync-behind" }
+
+      - alert: AccountsNeedReconnect
+        expr: sum(inbox_accounts{status=~"reauth|error"}) > 5
+        for: 30m
+        labels: { severity: warn }
+        annotations: { summary: "Several accounts need to be reconnected (provider revoked access or a key expired)" }
+
+      - alert: BackgroundJobsFailing
+        expr: sum by (job) (rate(inbox_jobs_total{result="error"}[15m])) / clamp_min(sum by (job) (rate(inbox_jobs_total[15m])), 0.001) > 0.2
+        for: 15m
+        labels: { severity: warn }
+        annotations: { summary: "More than 20% of {{ $labels.job }} jobs fail", runbook: "docs/ops-runbook.md#jobs-failing" }
+
+      - alert: QueueBacklog
+        expr: inbox_queue_jobs{state="waiting"} > 500
+        for: 15m
+        labels: { severity: warn }
+        annotations: { summary: "More than 500 jobs waiting" }
+
+      - alert: LlmErrors
+        expr: sum by (provider) (rate(inbox_llm_calls_total{ok="false"}[15m])) / clamp_min(sum by (provider) (rate(inbox_llm_calls_total[15m])), 0.001) > 0.25
+        for: 15m
+        labels: { severity: warn }
+        annotations: { summary: "More than 25% of calls to {{ $labels.provider }} fail (key, quota or outage)", runbook: "docs/ops-runbook.md#llm-errors" }
+
+      - alert: WebhookRejectionsSpike
+        expr: sum by (channel) (increase(inbox_webhooks_total{result="rejected"}[15m])) > 20
+        for: 5m
+        labels: { severity: warn }
+        annotations: { summary: "Many webhook requests for {{ $labels.channel }} failed signature checks (rotated secret, or someone probing)" }
+
+      - alert: ReplySendsFailing
+        expr: sum(increase(inbox_replies_total{result="failed"}[30m])) > 3
+        for: 5m
+        labels: { severity: warn }
+        annotations: { summary: "Confirmed replies are failing to send" }

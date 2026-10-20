@@ -1,0 +1,19 @@
+{
+  "name": "unified-inbox",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w apps/api && npm run build -w apps/web",
+    "test": "npm test -w apps/api && npm test -w packages/sdk",
+    "lint": "npm run lint -w apps/api && npm run lint -w apps/web && npm run lint -w packages/sdk && npm run check-generated -w packages/sdk",
+    "migrate": "npm run migrate -w apps/api",
+    "verify": "npm run build -w apps/api && node scripts/verify/rls-core.mjs && node scripts/verify/sync-inbox.mjs && node scripts/verify/ai-pipeline.mjs && node scripts/verify/chat-push.mjs && node scripts/verify/actions.mjs && node scripts/verify/privacy.mjs && node scripts/verify/load-seed.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.10",
+    "@electric-sql/pglite-pgvector": "^0.0.11"
+  }
+}
