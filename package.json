@@ -13,8 +13,8 @@
     "verify": "npm run build -w apps/api && node scripts/verify/rls-core.mjs && node scripts/verify/sync-inbox.mjs && node scripts/verify/ai-pipeline.mjs && node scripts/verify/chat-push.mjs && node scripts/verify/actions.mjs && node scripts/verify/privacy.mjs && node scripts/verify/workflows.mjs && node scripts/verify/load-seed.mjs"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.10",
-    "@electric-sql/pglite-pgvector": "^0.0.11",
-    "@electric-sql/pglite-socket": "^0.2.13"
+    "@electric-sql/pglite": "^0.5.11",
+    "@electric-sql/pglite-pgvector": "^0.0.12",
+    "@electric-sql/pglite-socket": "^0.2.14"
   }
 }
