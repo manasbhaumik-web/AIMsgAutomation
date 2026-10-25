@@ -1,0 +1,82 @@
+/* Admin console theme. Scoped to .adm so the rest of the app keeps its own look. */
+.adm {
+  --bg: #f2f8fe; --surface: #fff; --fg: #0f2a40; --muted: #546a80; --line: #d9e8f5;
+  --accent: #1f7bc4; --accent-fg: #fff; --danger: #a12a2a;
+  --tint: #e3f0fb; --field: #f6fafe; --line-strong: #bcd3e8; --side: #e9f4fd;
+  --ok: #166534; --ok-bg: #ddf5e6; --warn: #8a5a00; --warn-bg: #fdf1d6;
+  color-scheme: light;
+  display: flex; flex-wrap: wrap; min-height: calc(100vh - 53px);
+  background: var(--bg); color: var(--fg);
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* sidebar */
+.adm-side { flex: 0 0 248px; box-sizing: border-box; background: var(--side); border-right: 1px solid var(--line); padding: 20px 14px; display: flex; flex-direction: column; gap: 24px; }
+.adm-brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px; }
+.adm-brand > span:last-child { display: flex; flex-direction: column; line-height: 1.2; }
+.adm-brand strong { font-size: 14px; font-weight: 650; }
+.adm-brand small { font-size: 12px; color: var(--muted); }
+.adm-logo { width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--accent-fg); display: inline-flex; align-items: center; justify-content: center; }
+.adm-nav { display: flex; flex-direction: column; gap: 4px; }
+.adm-eyebrow { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); padding: 0 10px 6px; }
+.adm .adm-nav button { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; background: transparent; color: #4a6279; padding: 9px 10px; border-radius: 9px; font-weight: 500; }
+.adm .adm-nav button:hover:not(:disabled) { background: rgba(255, 255, 255, .6); }
+.adm .adm-nav button.active { background: var(--tint); color: var(--fg); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
+
+/* content */
+.adm-main { flex: 999 1 640px; min-width: 0; box-sizing: border-box; padding: 32px clamp(16px, 3vw, 48px); display: grid; align-content: start; gap: 28px; }
+.adm-main section { display: grid; gap: 14px; align-content: start; }
+.adm h2 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -.02em; }
+.adm p { margin: 0; }
+.adm code { font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-size: 12px; color: #3b5167; }
+
+/* controls */
+.adm label { color: #3b5167; }
+.adm input, .adm select, .adm textarea { background: var(--field); border: 1px solid var(--line-strong); border-radius: 10px; padding: 10px 12px; min-height: 44px; color: var(--fg); }
+.adm textarea { min-height: 0; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-size: 13px; line-height: 1.6; }
+.adm input[type='checkbox'] { min-height: 0; width: 18px; height: 18px; accent-color: var(--accent); }
+.adm button { min-height: 40px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg); font-weight: 500; }
+.adm button:hover:not(:disabled) { background: var(--tint); }
+.adm button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+.adm button.primary:hover:not(:disabled) { background: #1a69a8; }
+.adm :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* cards and tables */
+.adm .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; width: 100%; }
+.adm .card.inline { margin-top: 0; }
+.adm table { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; font-size: 14px; }
+.adm th { font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--field); }
+.adm th, .adm td { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.adm tbody tr:last-child td { border-bottom: 0; }
+.adm td.row { align-items: center; }
+.adm .muted { color: var(--muted); }
+.adm .error { color: var(--danger); }
+.adm .pill { border-color: transparent; background: var(--tint); color: #3b5167; font-weight: 600; }
+.adm .pill.active { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.adm .pill.warn { background: var(--warn-bg); color: var(--warn); }
+.adm [role='status'] { color: var(--ok); font-size: 14px; }
+
+/* tools */
+.tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.tool-card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; display: grid; gap: 10px; align-content: start; }
+.tool-card .between { align-items: center; }
+.tool-card code { line-height: 1.6; word-break: break-word; }
+
+/* chat */
+.adm .chat { padding: 0; gap: 0; overflow: hidden; }
+.chat-log { padding: 22px 18px; display: grid; gap: 16px; align-content: start; min-height: 240px; max-height: 460px; overflow-y: auto; }
+.turn { display: grid; gap: 4px; max-width: min(78%, 560px); }
+.turn.user { justify-self: end; justify-items: end; }
+.turn.assistant { justify-self: start; }
+.bubble { white-space: pre-wrap; padding: 10px 14px; border-radius: 14px 14px 14px 4px; background: var(--tint); border: 1px solid var(--line-strong); line-height: 1.5; }
+.turn.user .bubble { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); border-radius: 14px 14px 4px 14px; }
+.bubble.err { background: #fdecec; border-color: #f3b7b7; color: var(--danger); }
+.chat-form { display: flex; gap: 10px; padding: 14px 18px; border-top: 1px solid var(--line); background: var(--field); }
+.chat-form input { flex: 1; }
+
+@media (max-width: 880px) {
+  .adm-side { flex-basis: 100%; border-right: 0; border-bottom: 1px solid var(--line); }
+  .adm-nav { flex-direction: row; flex-wrap: wrap; }
+  .adm-eyebrow { display: none; }
+  .adm .adm-nav button { width: auto; }
+}

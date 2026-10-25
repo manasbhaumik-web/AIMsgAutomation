@@ -42,23 +42,29 @@ export function Connections() {
 
   return (
     <section>
-      <h2>Connected accounts</h2>
-      <p className="muted">Each account is read-only for now. We never send or change anything in your mailbox or calendar.</p>
+      <header className="page-head">
+        <h2>Connected accounts</h2>
+        <p className="muted">Each account is read-only for now. We never send or change anything in your mailbox or calendar.</p>
+      </header>
       {error && <p className="error" role="alert">{error}</p>}
 
+      {channels.length === 0 && <p className="notice">No channels are configured on this server. Add provider credentials to .env (see apps/api/src/connectors/README.md).</p>}
+      <div className="channel-grid">
+        {channels.map((c) => (
+          <div key={c.id} className="channel-card">
+            <div className="channel-top">
+              <span className="avatar" aria-hidden="true">{c.displayName.slice(0, 1).toUpperCase()}</span>
+              <strong>{c.displayName}</strong>
+            </div>
+            <button className="primary" onClick={() => connect(c.id)}>Connect {c.displayName}</button>
+            {c.notice && <span className="muted small">{c.notice}</span>}
+          </div>
+        ))}
+      </div>
       <label className="inline-check">
         <input type="checkbox" checked={write} onChange={(e) => setWrite(e.target.checked)} /> Also allow replies and calendar responses when I connect
       </label>
       <p className="muted small">Off by default, so providers ask only for read access. Nothing is ever sent without your confirmation, even when this is on.</p>
-      <div className="row" style={{ margin: '12px 0' }}>
-        {channels.length === 0 && <span className="muted">No channels are configured on this server. Add provider credentials to .env (see apps/api/src/connectors/README.md).</span>}
-        {channels.map((c) => <button key={c.id} className="primary" onClick={() => connect(c.id)}>Connect {c.displayName}</button>)}
-      </div>
-      {channels.some((c) => c.notice) && (
-        <ul className="muted small">
-          {channels.filter((c) => c.notice).map((c) => <li key={c.id}><strong>{c.displayName}:</strong> {c.notice}</li>)}
-        </ul>
-      )}
 
       <div className="stack">
         {accounts?.length === 0 && <p className="muted">Nothing connected yet. Pick a channel above to start. The last 14 days are imported first.</p>}

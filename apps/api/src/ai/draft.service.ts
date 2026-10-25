@@ -4,6 +4,7 @@ import type { PoolClient } from 'pg';
 import { Db, DbCtx } from '../db/db.service';
 import { LlmGateway } from '../llm/gateway.service';
 import { ConsentService } from './consent.service';
+import { ProfileService } from '../profile/profile.service';
 import { neutralize, truncate } from './helpers';
 
 export const MAX_DRAFT_CHARS = 4000;
@@ -58,7 +59,7 @@ export async function upsertOpenDraft(
  */
 @Injectable()
 export class DraftService {
-  constructor(private readonly db: Db, private readonly gateway: LlmGateway, private readonly consent: ConsentService) {}
+  constructor(private readonly db: Db, private readonly gateway: LlmGateway, private readonly consent: ConsentService, private readonly profile: ProfileService) {}
 
   async draftReply(ctx: DbCtx, threadId: string, instructions?: string): Promise<Record<string, unknown>> {
     await this.consent.require(ctx);
@@ -84,11 +85,14 @@ export class DraftService {
       .map((m) => `[${new Date(m.timestamp).toISOString().slice(0, 16)}] ${m.direction === 'outbound' ? 'You' : (m.sender?.name ?? m.sender?.email ?? m.sender?.handle ?? 'Unknown')}\n${truncate(m.body_text, 1500)}`)
       .join('\n\n');
 
+    // The person's saved tone, language and signature come first; their guidance for this reply follows.
+    const hints = await this.profile.promptHints(ctx);
+    const guidance = [hints, neutralize(truncate(instructions ?? '', 500))].filter(Boolean).join(' ');
     const res = await this.gateway.run(ctx, 'draft-reply', {
       today: new Date().toISOString().slice(0, 10),
       style: STYLE[t.channel],
       thread: neutralize(thread),
-      instructions: neutralize(truncate(instructions ?? '', 500)) || '(none)',
+      instructions: guidance || '(none)',
     });
     const body = cleanDraft(res.text);
     if (!body) throw new UnprocessableEntityException('The assistant did not produce a usable draft. Try again or write one yourself.');

@@ -31,6 +31,14 @@ const SECTIONS: { name: string; sql: string; keyed: boolean }[] = [
   { name: 'notifications', keyed: false, sql: 'SELECT id, kind, channel, priority, thread_id, created_at, read_at FROM notifications ORDER BY id' },
   { name: 'push_devices', keyed: false, sql: 'SELECT id, platform, label, created_at FROM push_devices ORDER BY created_at' },
   { name: 'consents', keyed: false, sql: 'SELECT purpose, granted_at, withdrawn_at FROM consents ORDER BY granted_at' },
+  // Phase 7. Report files are not inlined (they can be large and are downloadable while they exist); their records are.
+  { name: 'user_profile', keyed: false, sql: 'SELECT business_role, business_goals, tone, language, signature, timezone, work_days, work_start, work_end, auto_replies_enabled, escalation_rules, response_policies, report_prefs, updated_at FROM user_profiles' },
+  { name: 'workflows', keyed: false, sql: 'SELECT id, name, description, enabled, autonomy, trigger, conditions, actions, policy, created_at, updated_at FROM workflows ORDER BY created_at' },
+  { name: 'workflow_runs', keyed: false, sql: 'SELECT id, workflow_id, trigger_type, thread_id, status, steps, error, manual, started_at, finished_at FROM workflow_runs ORDER BY started_at' },
+  { name: 'approvals', keyed: false, sql: 'SELECT id, workflow_id, kind, summary, payload, status, error, decided_at, created_at FROM approvals ORDER BY created_at' },
+  { name: 'activity_log', keyed: false, sql: 'SELECT id, workflow_id, actor, kind, summary, meta, at FROM activity_log ORDER BY id' },
+  { name: 'reports', keyed: false, sql: 'SELECT id, title, kind, format, params, size_bytes, created_at, expires_at FROM reports ORDER BY created_at' },
+  { name: 'team_memberships', keyed: false, sql: 'SELECT t.name AS team, m.role, m.created_at FROM team_members m JOIN teams t ON t.id = m.team_id WHERE m.user_id = app_uid() ORDER BY m.created_at' },
 ];
 
 @Injectable()

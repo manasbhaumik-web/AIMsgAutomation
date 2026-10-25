@@ -100,7 +100,26 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   let res = await raw(path, init, session.accessToken);
   if (res.status === 401 && (await restore())) res = await raw(path, init, session!.accessToken);
   if (!res.ok) return fail(res);
-  return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
+  if (res.status === 204) return undefined as T;
+  // A handler that returns null sends an empty body; treat that as null instead of failing to parse it.
+  const text = await res.text();
+  return (text ? JSON.parse(text) : null) as T;
+}
+
+/** Saves a file that needs the bearer token (a plain link would not carry it). */
+export async function apiDownload(path: string, filename: string): Promise<void> {
+  if (!session) throw new Error('Not signed in');
+  let res = await raw(path, {}, session.accessToken);
+  if (res.status === 401 && (await restore())) res = await raw(path, {}, session!.accessToken);
+  if (!res.ok) return fail(res);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 export interface StreamEvent {

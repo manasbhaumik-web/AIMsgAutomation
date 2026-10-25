@@ -120,6 +120,22 @@ export interface RsvpRequest {
   response: 'accept' | 'decline' | 'tentative';
   comment?: string;
 }
+/** An event the user asked to create or change. Attendees are plain email addresses; the provider invites them. */
+export interface EventWrite {
+  title: string;
+  start: Date;
+  end: Date;
+  allDay?: boolean;
+  timezone?: string;
+  location?: string | null;
+  description?: string | null;
+  attendees?: string[];
+}
+export interface EventWriteResult {
+  externalId: string;
+  /** The event as the provider now holds it, when it is returned, so the app can show it before the next sync. */
+  event: NormalizedEvent | null;
+}
 
 export interface ChannelConnector {
   readonly id: Channel;
@@ -151,6 +167,10 @@ export interface ChannelConnector {
   /** Only called by the confirmed-send service after the user approved this exact text. */
   sendReply?(acct: ConnectorAccount, req: SendRequest): Promise<SendResult>;
   respondToEvent?(acct: ConnectorAccount, req: RsvpRequest): Promise<void>;
+  /** Calendar writes. Only called by CalendarActionsService, after the user (or an approval they gave) confirmed the exact event. */
+  createEvent?(acct: ConnectorAccount, ev: EventWrite): Promise<EventWriteResult>;
+  updateEvent?(acct: ConnectorAccount, externalId: string, patch: Partial<EventWrite>): Promise<EventWriteResult>;
+  cancelEvent?(acct: ConnectorAccount, externalId: string): Promise<void>;
   revoke(acct: ConnectorAccount): Promise<void>;
 }
 

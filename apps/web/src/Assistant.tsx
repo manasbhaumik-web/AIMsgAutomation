@@ -1,21 +1,26 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, Citation, api, streamPost } from './api';
+import { ApiError, Citation, api, apiDownload, streamPost } from './api';
+import { ApprovalCard, ApprovalRow } from './Approvals';
 import { ConsentGate } from './AiConsent';
 
 interface Conv { id: string; title: string | null; updated_at: string }
-interface Turn { id?: number; role: 'user' | 'assistant'; content: string; citations: Citation[]; pending?: boolean; failed?: string }
+type Card = { type: 'approval'; approval: ApprovalRow } | { type: 'report'; report: { id: string; title: string; format: string } };
+interface CommandResult { handled: boolean; reply?: string; cards?: Card[] }
+interface Turn { id?: number; cards?: Card[]; role: 'user' | 'assistant'; content: string; citations: Citation[]; pending?: boolean; failed?: string }
 
 export function Assistant({ onOpenThread }: { onOpenThread: (threadId: string) => void }) {
   return (
     <section>
-      <h2>Assistant</h2>
-      <p className="muted">Ask about your mail and calendar. Answers cite the messages they come from. It can draft wording for you but never sends anything.</p>
+      <header className="page-head">
+        <h2>Assistant</h2>
+        <p className="muted">Ask about your mail and calendar. Answers cite the messages they come from. It can draft wording for you but never sends anything.</p>
+      </header>
       <ConsentGate><Chat onOpenThread={onOpenThread} /></ConsentGate>
     </section>
   );
 }
 
-const EXAMPLES = ['What did the client say about the invoice this week?', 'Do I have any conflicts tomorrow?', 'What needs a reply from me?'];
+const EXAMPLES = ['What did the client say about the invoice this week?', 'Do I have any conflicts tomorrow?', 'What needs a reply from me?', 'Build a weekly report as a PDF', 'Schedule a call with Dana tomorrow at 3pm for 30 minutes', 'Show my approvals'];
 
 function Chat({ onOpenThread }: { onOpenThread: (threadId: string) => void }) {
   const [convs, setConvs] = useState<Conv[]>([]);
@@ -44,6 +49,18 @@ function Chat({ onOpenThread }: { onOpenThread: (threadId: string) => void }) {
     const text = (preset ?? input).trim();
     if (!text || busy) return;
     setInput(''); setError(''); setBusy(true);
+    try {
+      // Commands (report, calendar request, approvals) are matched by fixed patterns on the server, not by the AI; anything else is a question.
+      const cmd = await api<CommandResult>('/assistant/command', { method: 'POST', body: JSON.stringify({ text }) });
+      if (cmd.handled) {
+        setTurns((t) => [...t, { role: 'user', content: text, citations: [] }, { role: 'assistant', content: cmd.reply ?? '', citations: [], cards: cmd.cards }]);
+        setBusy(false);
+        return;
+      }
+    } catch (err) {
+      setError((err as Error).message); setBusy(false);
+      return;
+    }
     let id = active;
     try {
       if (!id) { id = (await api<{ id: string }>('/chat/conversations', { method: 'POST' })).id; setActive(id); }
@@ -96,6 +113,9 @@ function Chat({ onOpenThread }: { onOpenThread: (threadId: string) => void }) {
             <div key={i} className={`turn ${t.role}`}>
               <div className="who muted small">{t.role === 'user' ? 'You' : 'Assistant'}</div>
               <div className="text">{t.content || (t.pending ? 'Thinking…' : '')}</div>
+              {t.cards?.map((c, ci) => c.type === 'approval'
+                ? <ApprovalCard key={ci} a={c.approval} onDone={(m) => setTurns((x) => [...x, { role: 'assistant', content: m, citations: [] }])} />
+                : <div key={ci} className="card wide report-card"><span><strong>{c.report.title}</strong> <span className="muted small">{c.report.format.toUpperCase()}</span></span><button className="primary" onClick={() => apiDownload(`/reports/${c.report.id}/download`, `${c.report.title.replace(/[^A-Za-z0-9 _-]+/g, '').trim().replace(/\s+/g, '-') || 'report'}.${c.report.format}`).catch((e) => setError((e as Error).message))}>Download</button></div>)}
               {t.failed && <p className="error" role="alert">{t.failed}</p>}
               {t.citations.length > 0 && (
                 <ul className="cites" aria-label="Sources">

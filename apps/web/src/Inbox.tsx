@@ -27,6 +27,7 @@ export function Inbox({ openThreadId, onOpened }: { openThreadId?: string | null
   const [next, setNext] = useState<string | null>(null);
   const [open, setOpen] = useState<ThreadDetail | null>(null);
   const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
 
   const loadInbox = useCallback(() => { api<InboxData>('/inbox').then(setInbox).catch((e) => setError(e.message)); }, []);
   const query = useCallback((before?: string) => {
@@ -60,60 +61,96 @@ export function Inbox({ openThreadId, onOpened }: { openThreadId?: string | null
   useEffect(() => { if (openThreadId) { void openById(openThreadId, 1); onOpened?.(); } }, [openThreadId, openById, onOpened]);
 
   const mailChannels = inbox?.channels.filter((c) => MESSAGING.includes(c.channel)) ?? [];
+  const totalUnread = mailChannels.reduce((n, c) => n + c.unread, 0);
+  const views: { id: string; label: string; count?: number; active: boolean; pick: () => void }[] = [
+    { id: 'all', label: 'All messages', active: !priority && !unreadOnly, pick: () => { setPriority(''); setUnreadOnly(false); setScope({}); } },
+    { id: 'needs_reply', label: 'Needs reply', active: priority === 'needs_reply', pick: () => { setPriority('needs_reply'); setUnreadOnly(false); } },
+    { id: 'urgent', label: 'Urgent', active: priority === 'urgent', pick: () => { setPriority('urgent'); setUnreadOnly(false); } },
+    { id: 'unread', label: 'Unread', count: totalUnread, active: unreadOnly && !priority, pick: () => { setPriority(''); setUnreadOnly(true); } },
+    { id: 'fyi', label: 'FYI', active: priority === 'fyi', pick: () => { setPriority('fyi'); setUnreadOnly(false); } },
+  ];
+  const title = views.find((v) => v.active)?.label ?? 'Filtered messages';
+  const needle = search.trim().toLowerCase();
+  const shown = needle ? threads.filter((t) => `${who(t.last_sender)} ${t.subject ?? ''} ${t.snippet ?? ''}`.toLowerCase().includes(needle)) : threads;
 
   return (
     <div className="inbox">
-      <aside className="side" aria-label="Channels and filters">
-        <button className={!scope.channel && !scope.accountId ? 'active' : ''} onClick={() => setScope({})}>All messages</button>
-        {mailChannels.map((c) => (
-          <div key={c.channel}>
-            <button className={scope.channel === c.channel && !scope.accountId ? 'active' : ''} onClick={() => setScope({ channel: c.channel })}>
-              {CHANNEL_LABEL[c.channel]} {c.unread > 0 && <span className="badge">{c.unread}</span>}
+      <aside className="side" aria-label="Views and filters">
+        <div className="side-group">
+          {views.map((v) => (
+            <button key={v.id} className={v.active ? 'active' : ''} aria-current={v.active ? 'true' : undefined} onClick={v.pick}>
+              <span>{v.label}</span>{v.count ? <span className="badge">{v.count}</span> : null}
             </button>
-            {c.accounts.length > 1 && c.accounts.map((a) => (
-              <button key={a.id} className={`sub ${scope.accountId === a.id ? 'active' : ''}`} onClick={() => setScope({ accountId: a.id })}>
-                {a.external_id} {a.unread > 0 && <span className="badge">{a.unread}</span>}
-              </button>
+          ))}
+        </div>
+        {mailChannels.length > 0 && (
+          <div className="side-group">
+            <span className="eyebrow">Connected</span>
+            {mailChannels.map((c) => (
+              <div key={c.channel}>
+                <button className={scope.channel === c.channel && !scope.accountId ? 'active' : ''} onClick={() => setScope(scope.channel === c.channel ? {} : { channel: c.channel })}>
+                  <span className="dot" aria-hidden="true" /><span>{CHANNEL_LABEL[c.channel]}</span>{c.unread > 0 && <span className="badge">{c.unread}</span>}
+                </button>
+                {c.accounts.length > 1 && c.accounts.map((a) => (
+                  <button key={a.id} className={`sub ${scope.accountId === a.id ? 'active' : ''}`} onClick={() => setScope({ accountId: a.id })}>
+                    <span>{a.external_id}</span>{a.unread > 0 && <span className="badge">{a.unread}</span>}
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
-        ))}
-        <label className="inline-check"><input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)} /> Unread only</label>
-        <label>Priority
-          <select id="f-priority" value={priority} onChange={(e) => setPriority(e.target.value as Priority | '')}>
-            <option value="">Any</option>
-            {(Object.keys(PRIORITY_LABEL) as Priority[]).map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
-          </select>
-        </label>
-        <label>Topic
-          <select id="f-topic" value={topicId} onChange={(e) => setTopicId(e.target.value)}>
-            <option value="">Any</option>
-            {topics.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.threads})</option>)}
-          </select>
-        </label>
+        )}
+        {topics.length > 0 && (
+          <div className="side-group">
+            <span className="eyebrow">Topics</span>
+            <div className="topic-chips">
+              {topics.map((t) => (
+                <button key={t.id} className={`topic-chip ${topicId === t.id ? 'active' : ''}`} aria-pressed={topicId === t.id} onClick={() => setTopicId(topicId === t.id ? '' : t.id)}>{t.name}</button>
+              ))}
+            </div>
+          </div>
+        )}
       </aside>
 
       <section className="list" aria-label="Threads">
-        {error && <p className="error" role="alert">{error}</p>}
-        {inbox && mailChannels.length === 0 && <p className="muted pad">No mailbox connected. Go to Accounts to connect Gmail or Outlook.</p>}
-        {threads.map((t) => (
+        <div className="list-head">
+          <h1>{title}</h1>
+          <span className="muted small">{shown.length} {shown.length === 1 ? 'conversation' : 'conversations'}</span>
+        </div>
+        <div className="list-search">
+          <label className="sr-only" htmlFor="list-q">Search this list</label>
+          <input id="list-q" type="search" placeholder="Search this list" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        {error && <p className="error pad" role="alert">{error}</p>}
+        {inbox && mailChannels.length === 0 && (
+          <div className="empty">
+            <strong>No mailbox connected</strong>
+            <p className="muted">Connect Gmail, Outlook, Slack or Teams under Accounts. The last 14 days are imported first.</p>
+          </div>
+        )}
+        {shown.map((t) => (
           <button key={t.id} className={`row-item ${t.unread ? 'unread' : ''} ${open?.id === t.id ? 'selected' : ''}`} onClick={() => openById(t.id, t.unread)}>
             <span className="between"><strong>{who(t.last_sender)}</strong><time className="muted small">{new Date(t.last_message_at).toLocaleDateString()}</time></span>
             <span className="subject">{t.subject || '(no subject)'} {t.message_count > 1 && <span className="muted small">({t.message_count})</span>}</span>
             <span className="muted small clip">{t.snippet}</span>
-            {(t.priority && t.priority !== 'fyi' && t.priority !== 'low') || t.topics.length > 0 ? (
-              <span className="chips">
-                {t.priority && (t.priority === 'urgent' || t.priority === 'needs_reply') && <span className={`chip ${t.priority}`}>{PRIORITY_LABEL[t.priority]}</span>}
-                {t.topics.map((tp) => <span key={tp.id} className="chip">{tp.name}</span>)}
-              </span>
-            ) : null}
+            <span className="chips">
+              <span className="chip tag">{CHANNEL_LABEL[t.channel] ?? t.channel}</span>
+              {t.priority && (t.priority === 'urgent' || t.priority === 'needs_reply') && <span className={`chip ${t.priority}`}>{PRIORITY_LABEL[t.priority]}</span>}
+              {t.topics.map((tp) => <span key={tp.id} className="chip">{tp.name}</span>)}
+            </span>
           </button>
         ))}
-        {mailChannels.length > 0 && threads.length === 0 && <p className="muted pad">{unreadOnly || priority || topicId ? 'No conversations match these filters.' : 'Nothing here yet. The first import can take a minute.'}</p>}
+        {mailChannels.length > 0 && shown.length === 0 && <p className="muted pad">{unreadOnly || priority || topicId || needle ? 'No conversations match these filters.' : 'Nothing here yet. The first import can take a minute.'}</p>}
         {next && <button className="more" onClick={async () => { const r = await api<{ threads: ThreadRow[]; nextBefore: string | null }>(query(next)); setThreads((p) => [...p, ...r.threads]); setNext(r.nextBefore); }}>Load older</button>}
       </section>
 
       <section className="reader" aria-label="Message">
-        {!open && <p className="muted pad">Select a conversation.</p>}
+        {!open && (
+          <div className="empty center-empty">
+            <strong>Select a conversation</strong>
+            <p className="muted">Its summary, action items and a reply draft appear here.</p>
+          </div>
+        )}
         {open && <Reader key={open.id} thread={open} onChanged={() => openById(open.id)} />}
       </section>
     </div>
@@ -134,19 +171,23 @@ function Reader({ thread, onChanged }: { thread: ThreadDetail; onChanged: () => 
 
   return (
     <>
-      <h2>{thread.subject || '(no subject)'}</h2>
-      <div className="chips">
-        {thread.priority && <span className={`chip ${thread.priority}`}>{PRIORITY_LABEL[thread.priority]}</span>}
-        {thread.topics.map((t) => <span key={t.id} className="chip">{t.name}</span>)}
-      </div>
+      <header className="reader-head">
+        <div className="chips">
+          {thread.priority && <span className={`chip ${thread.priority}`}>{PRIORITY_LABEL[thread.priority]}</span>}
+          {thread.topics.map((t) => <span key={t.id} className="chip">{t.name}</span>)}
+          <span className="muted small">{thread.messages.length} {thread.messages.length === 1 ? 'message' : 'messages'}</span>
+        </div>
+        <h2>{thread.subject || '(no subject)'}</h2>
+      </header>
       <div className="row" style={{ margin: '10px 0' }}>
         <button disabled={busy} onClick={() => summarize(false)}>{busy ? 'Summarizing…' : summary ? 'Summarize again' : 'Summarize'}</button>
         {summary && <button disabled={busy} onClick={() => summarize(true)}>Regenerate</button>}
       </div>
       {note && <p className="error" role="alert">{note}</p>}
-      {summary && <div className="summary" aria-label="Summary">{summary.text}</div>}
+      {summary && <div className="summary" aria-label="Summary"><span className="summary-head">Summary</span>{summary.text}</div>}
       {thread.action_items.length > 0 && (
         <ul className="actions" aria-label="Action items">
+          <li className="eyebrow">Action items</li>
           {thread.action_items.map((a) => (
             <li key={a.id}>
               <label className="inline-check">
@@ -168,9 +209,12 @@ function MessageView({ m }: { m: Msg }) {
   const [showHtml, setShowHtml] = useState(!!m.body_html_sanitized);
   return (
     <article className="msg">
-      <header>
+      <header className="msg-head">
+        <span className="avatar" aria-hidden="true">{who(m.sender).slice(0, 1).toUpperCase()}</span>
+        <div>
         <strong>{who(m.sender)}</strong> <span className="muted small">&lt;{m.sender?.email ?? m.sender?.handle}&gt;</span>
         <div className="muted small">To {m.recipients.to?.map(who).join(', ') || 'undisclosed'} · {new Date(m.timestamp).toLocaleString()}{m.direction === 'outbound' && ' · sent'}</div>
+        </div>
       </header>
       {showHtml && m.body_html_sanitized ? <HtmlBody html={m.body_html_sanitized} /> : <pre className="plain">{m.body_text}</pre>}
       {m.body_html_sanitized && <button className="link" onClick={() => setShowHtml(!showHtml)}>{showHtml ? 'Show plain text' : 'Show formatted'}</button>}

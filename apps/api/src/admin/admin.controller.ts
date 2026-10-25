@@ -1,5 +1,6 @@
-import { BadRequestException, Body, Controller, Delete, Get, HttpCode, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Inject, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { z } from 'zod';
+import { ENV, Env } from '../config/env';
 import { AuditService } from '../common/audit.service';
 import { ZodPipe } from '../common/zod.pipe';
 import { CurrentUser, Roles, dbCtx } from '../auth/guards';
@@ -44,13 +45,59 @@ const quotaPut = z.object({
 });
 const testBody = z.object({ model: z.string().min(1).max(120) });
 
+const chatBody = z.object({
+  model: z.string().min(1).max(120),
+  system: z.string().max(5_000).optional(),
+  temperature: z.number().min(0).max(2).default(0.3),
+  maxTokens: z.number().int().min(1).max(8_192).default(512),
+  messages: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string().min(1).max(8_000) })).min(1).max(40),
+});
+
+/** Which keys each tool needs in .env. Names only: values are never returned. */
+const TOOLS: { id: string; name: string; keys: string[]; note: string }[] = [
+  { id: 'gmail', name: 'Gmail + Google Calendar', keys: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'], note: 'Google Cloud: enable the Gmail and Calendar APIs, OAuth client type Web application.' },
+  { id: 'outlook', name: 'Outlook + Microsoft Calendar + Teams', keys: ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET'], note: 'Entra app: Mail.Read, Calendars.Read, and Chat.Read for Teams (work or school accounts).' },
+  { id: 'slack', name: 'Slack', keys: ['SLACK_CLIENT_ID', 'SLACK_CLIENT_SECRET', 'SLACK_SIGNING_SECRET'], note: 'Slack app with user token scopes; keep it internal to one workspace.' },
+  { id: 'whatsapp', name: 'WhatsApp Business', keys: ['WHATSAPP_APP_ID', 'WHATSAPP_APP_SECRET', 'WHATSAPP_CONFIG_ID', 'WHATSAPP_VERIFY_TOKEN'], note: 'Business numbers only. Webhooks need a public HTTPS PUBLIC_API_URL.' },
+  { id: 'linkedin', name: 'LinkedIn (sign-in only)', keys: ['LINKEDIN_ENABLED', 'LINKEDIN_CLIENT_ID', 'LINKEDIN_CLIENT_SECRET'], note: 'Profile link only; LinkedIn does not allow reading messages.' },
+];
+
 const NIL = '00000000-0000-0000-0000-000000000000';
 
 /** Platform admin console API. Every mutation is audited and enforced again by RLS. */
 @Roles('admin')
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly db: Db, private readonly crypto: CryptoService, private readonly audit: AuditService, private readonly adapters: AdapterRegistry) {}
+  constructor(private readonly db: Db, private readonly crypto: CryptoService, private readonly audit: AuditService, private readonly adapters: AdapterRegistry, @Inject(ENV) private readonly env: Env) {}
+
+  // ---- test console ----
+  /** Whether each tool's credentials are present in .env. Reports names and yes/no only. */
+  @Get('tools')
+  tools() {
+    const e = this.env as unknown as Record<string, string | undefined>;
+    return TOOLS.map((t) => {
+      const missing = t.keys.filter((k) => !e[k] || (k === 'LINKEDIN_ENABLED' && e[k] !== 'true'));
+      return { id: t.id, name: t.name, configured: missing.length === 0, missing, redirectUrl: `${this.env.WEB_URL}/connect/callback`, note: t.note };
+    });
+  }
+
+  /** One stateless chat turn against a chosen provider and model, for trying a key out. Content is not stored or logged. */
+  @HttpCode(200) @Post('llm/providers/:id/chat')
+  async testChat(@CurrentUser() u: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body(new ZodPipe(chatBody)) b: z.infer<typeof chatBody>) {
+    const r = await this.db.tx(dbCtx(u), (c) => c.query('SELECT kind, base_url, enc_api_key FROM llm_providers WHERE id = $1', [id]));
+    const p = r.rows[0];
+    if (!p) throw new NotFoundException();
+    const started = Date.now();
+    try {
+      const out = await this.adapters.get(p.kind).complete({ kind: p.kind, baseUrl: p.base_url, apiKey: this.crypto.decrypt(p.enc_api_key) }, {
+        model: b.model, system: b.system, messages: b.messages, temperature: b.temperature, maxTokens: b.maxTokens, timeoutMs: 60_000,
+      });
+      await this.audit.log(dbCtx(u), 'admin.llm.test-chat', id);
+      return { ok: true, text: out.text, tokensIn: out.tokensIn, tokensOut: out.tokensOut, latencyMs: Date.now() - started };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  }
 
   // ---- providers (API keys are write-only) ----
   @Get('llm/providers')

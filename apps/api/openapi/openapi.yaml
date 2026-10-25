@@ -30,6 +30,11 @@ tags:
   - { name: calendar }
   - { name: notifications }
   - { name: admin }
+  - { name: profile }
+  - { name: workflows }
+  - { name: approvals }
+  - { name: teams }
+  - { name: reports }
   - { name: ops }
 paths:
   /health:
@@ -238,6 +243,11 @@ paths:
 
   /calendar/events:
     get: { tags: [calendar], summary: Events in a window, parameters: [{ name: from, in: query, schema: { type: string, format: date-time } }, { name: to, in: query, schema: { type: string, format: date-time } }], responses: { '200': { description: OK, content: { application/json: { schema: { type: object, properties: { events: { type: array, items: { $ref: '#/components/schemas/Event' } } } } } } } } }
+    post:
+      tags: [calendar]
+      summary: Create an event on my calendar. `confirm` must be true. An overlap is refused (409 `event_conflict`, with the clashing events) unless `acceptConflicts` is true. Needs a calendar connected with write access.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [confirm, title, start, end], properties: { confirm: { type: boolean, enum: [true] }, accountId: { type: string, format: uuid }, acceptConflicts: { type: boolean, default: false }, title: { type: string, maxLength: 200 }, start: { type: string, format: date-time }, end: { type: string, format: date-time }, allDay: { type: boolean }, timezone: { type: string }, location: { type: string, nullable: true }, description: { type: string, nullable: true }, attendees: { type: array, items: { type: string, format: email }, maxItems: 50 } } } } } }
+      responses: { '201': { description: Created }, '409': { $ref: '#/components/responses/Error' } }
   /calendar/suggest-times:
     post:
       tags: [calendar]
@@ -281,6 +291,10 @@ paths:
     delete: { tags: [admin], summary: Remove a provider, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '204': { description: Removed } } }
   /admin/llm/providers/{id}/test:
     post: { tags: [admin], summary: Check that a provider key works, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK } } }
+  /admin/llm/providers/{id}/chat:
+    post: { tags: [admin], summary: One stateless test chat turn against a provider and model, parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { '200': { description: OK } } }
+  /admin/tools:
+    get: { tags: [admin], summary: Which tool credentials are configured (names only, never values), responses: { '200': { description: OK } } }
   /admin/llm/routes:
     get: { tags: [admin], summary: Which provider and model each task uses, responses: { '200': { description: OK } } }
   /admin/llm/routes/{task}:
@@ -297,6 +311,119 @@ paths:
     get: { tags: [admin], summary: AI usage and cost, responses: { '200': { description: OK } } }
   /admin/audit:
     get: { tags: [admin], summary: Audit log, responses: { '200': { description: OK } } }
+
+  # ---- Phase 7: profile, calendar writes, workflows and approvals, teams, reports, activity ----
+  /me/profile:
+    get: { tags: [profile], summary: My profile and preferences (tone, language, working hours, automation switches), responses: { '200': { description: OK } } }
+    put:
+      tags: [profile]
+      summary: Replace my profile. Fields left out return to their defaults. Automatic replies stay off unless autoRepliesEnabled is true.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Saved }, '400': { $ref: '#/components/responses/Error' } }
+  /calendar/conflicts:
+    post:
+      tags: [calendar]
+      summary: Existing events that overlap a proposed time (reads only)
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [start, end], properties: { start: { type: string, format: date-time }, end: { type: string, format: date-time }, excludeEventId: { type: string, format: uuid } } } } } }
+      responses: { '200': { description: OK } }
+  /calendar/events/{id}:
+    patch:
+      tags: [calendar]
+      summary: Edit or reschedule an event. `confirm` must be true; an overlap is refused (409 `event_conflict`) unless `acceptConflicts` is true. Give `start` and `end` together.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [confirm], properties: { confirm: { type: boolean, enum: [true] }, acceptConflicts: { type: boolean, default: false }, title: { type: string }, start: { type: string, format: date-time }, end: { type: string, format: date-time }, location: { type: string, nullable: true }, description: { type: string, nullable: true }, attendees: { type: array, items: { type: string, format: email } } } } } } }
+      responses: { '200': { description: Changed }, '409': { $ref: '#/components/responses/Error' } }
+  /calendar/events/{id}/cancel:
+    post:
+      tags: [calendar]
+      summary: Cancel an event (attendees are notified by the provider). `confirm` must be true.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [confirm], properties: { confirm: { type: boolean, enum: [true] } } } } } }
+      responses: { '204': { description: Cancelled }, '409': { $ref: '#/components/responses/Error' } }
+  /workflows:
+    get: { tags: [workflows], summary: My workflows, responses: { '200': { description: OK } } }
+    post:
+      tags: [workflows]
+      summary: Create a workflow (switched off unless `enabled` is true). Autonomy is suggest, ask (default) or auto; "auto" needs allowed channels and also needs automatic replies switched on in the profile.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '201': { description: Created }, '400': { $ref: '#/components/responses/Error' } }
+  /workflows/{id}:
+    get: { tags: [workflows], summary: One workflow, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+    put: { tags: [workflows], summary: Replace a workflow, parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { '200': { description: Saved }, '400': { $ref: '#/components/responses/Error' } } }
+    delete: { tags: [workflows], summary: Delete a workflow, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '204': { description: Deleted } } }
+  /workflows/{id}/enabled:
+    post: { tags: [workflows], summary: Switch a workflow on or off. Switching on only looks at mail that arrives afterwards., parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [enabled], properties: { enabled: { type: boolean } } } } } }, responses: { '200': { description: OK } } }
+  /workflows/{id}/run:
+    post: { tags: [workflows], summary: Run once now, on a conversation if the workflow replies. Ignores the conditions; sends and calendar changes still need approval or the policy., parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { content: { application/json: { schema: { type: object, properties: { threadId: { type: string, format: uuid } } } } } }, responses: { '200': { description: The run }, '400': { $ref: '#/components/responses/Error' } } }
+  /workflows/{id}/runs:
+    get: { tags: [workflows], summary: Recent runs with their step-by-step log, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK } } }
+  /approvals:
+    get: { tags: [approvals], summary: Requests waiting for me (or past ones), parameters: [{ name: status, in: query, schema: { type: string, enum: [pending, executed, rejected, expired, failed] } }], responses: { '200': { description: OK } } }
+  /approvals/{id}:
+    get: { tags: [approvals], summary: One request with the live draft and payloadHash to present when approving, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+  /approvals/{id}/approve:
+    post:
+      tags: [approvals]
+      summary: Approve and carry out the request. `payloadHash` must be the hash shown; if the request changed, nothing happens (409 `approval_changed`). A newer message or a calendar clash asks again (409 `thread_changed` / `event_conflict`).
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [payloadHash], properties: { payloadHash: { type: string }, acceptNewMessages: { type: boolean }, acceptConflicts: { type: boolean } } } } } }
+      responses: { '200': { description: Carried out }, '409': { $ref: '#/components/responses/Error' } }
+  /approvals/{id}/reject:
+    post: { tags: [approvals], summary: Decline the request. Nothing is sent or changed., parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK }, '409': { $ref: '#/components/responses/Error' } } }
+  /activity:
+    get: { tags: [workflows], summary: The record of everything done for me (drafts, sends, approvals, calendar changes, reports), parameters: [{ name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }, { name: before, in: query, schema: { type: integer } }, { name: kind, in: query, schema: { type: string } }], responses: { '200': { description: OK } } }
+  /reports:
+    get: { tags: [reports], summary: My generated reports (files expire after 30 days), responses: { '200': { description: OK } } }
+    post:
+      tags: [reports]
+      summary: Build a PDF, Word or Excel report from my synced data (no message bodies, no AI). Download it with the returned id.
+      requestBody: { content: { application/json: { schema: { type: object, properties: { kind: { type: string, enum: [inbox, actions, calendar, weekly], default: weekly }, format: { type: string, enum: [pdf, docx, xlsx], default: pdf }, rangeDays: { type: integer, minimum: 1, maximum: 90, default: 7 }, title: { type: string } } } } } }
+      responses: { '201': { description: Created }, '400': { $ref: '#/components/responses/Error' } }
+  /reports/{id}/download:
+    get: { tags: [reports], summary: The report file. Fetch with the bearer token and save it., parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: The file, content: { application/pdf: {}, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': {}, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {} } }, '404': { $ref: '#/components/responses/Error' } } }
+  /reports/{id}:
+    delete: { tags: [reports], summary: Delete a report, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '204': { description: Deleted } } }
+  /teams:
+    get: { tags: [teams], summary: Teams I belong to, with my role, responses: { '200': { description: OK } } }
+    post: { tags: [teams], summary: Create a team (I become its owner), requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, maxLength: 80 } } } } } }, responses: { '201': { description: Created } } }
+  /teams/{id}:
+    get: { tags: [teams], summary: A team with its members (and, for owners and admins, open invitations), parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+    patch: { tags: [teams], summary: Rename a team (admin or owner), parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string } } } } } }, responses: { '200': { description: OK }, '403': { $ref: '#/components/responses/Error' } } }
+    delete: { tags: [teams], summary: Delete a team (owner only), parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '204': { description: Deleted }, '403': { $ref: '#/components/responses/Error' } } }
+  /teams/{id}/invites:
+    post: { tags: [teams], summary: Invite an email address. The reply is the same whether or not that address has an account. Only the owner can invite an admin., parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string, format: email }, role: { type: string, enum: [admin, member, viewer], default: member } } } } } }, responses: { '201': { description: Invited }, '403': { $ref: '#/components/responses/Error' } } }
+  /teams/{id}/invites/{inviteId}:
+    delete: { tags: [teams], summary: Withdraw an invitation (admin or owner), parameters: [{ $ref: '#/components/parameters/Id' }, { name: inviteId, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '204': { description: Withdrawn } } }
+  /teams/{id}/members/{userId}:
+    patch: { tags: [teams], summary: Change a member's role. The owner row cannot be changed., parameters: [{ $ref: '#/components/parameters/Id' }, { name: userId, in: path, required: true, schema: { type: string, format: uuid } }], requestBody: { required: true, content: { application/json: { schema: { type: object, required: [role], properties: { role: { type: string, enum: [admin, member, viewer] } } } } } }, responses: { '200': { description: OK }, '403': { $ref: '#/components/responses/Error' } } }
+    delete: { tags: [teams], summary: Leave a team, or remove someone below my role. The owner cannot be removed., parameters: [{ $ref: '#/components/parameters/Id' }, { name: userId, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '204': { description: Removed }, '409': { $ref: '#/components/responses/Error' } } }
+  /team-invites:
+    get: { tags: [teams], summary: Invitations sent to my email address, responses: { '200': { description: OK } } }
+  /team-invites/{id}/accept:
+    post: { tags: [teams], summary: Join the team, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: Joined }, '404': { $ref: '#/components/responses/Error' } } }
+  /team-invites/{id}/decline:
+    post: { tags: [teams], summary: Decline an invitation, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '204': { description: Declined } } }
+  /teams/{id}/templates:
+    get: { tags: [teams], summary: Workflow templates shared with the team, parameters: [{ $ref: '#/components/parameters/Id' }], responses: { '200': { description: OK } } }
+    post: { tags: [teams], summary: Add a shared template (admin or owner), parameters: [{ $ref: '#/components/parameters/Id' }], requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { '201': { description: Created }, '403': { $ref: '#/components/responses/Error' } } }
+  /teams/{id}/templates/{templateId}:
+    put: { tags: [teams], summary: Replace a shared template (admin or owner), parameters: [{ $ref: '#/components/parameters/Id' }, { name: templateId, in: path, required: true, schema: { type: string, format: uuid } }], requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { '200': { description: OK } } }
+    delete: { tags: [teams], summary: Remove a shared template (admin or owner), parameters: [{ $ref: '#/components/parameters/Id' }, { name: templateId, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '204': { description: Removed } } }
+  /workflow-templates/{templateId}/install:
+    post: { tags: [teams], summary: Copy a team template into my own workflows, switched off. "auto" is never carried over., parameters: [{ name: templateId, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '201': { description: Installed }, '404': { $ref: '#/components/responses/Error' } } }
+  /assistant/command:
+    post:
+      tags: [ai]
+      summary: "Chat commands: build a report, prepare a calendar event for approval, list approvals. `handled: false` means it was not a command and should be asked as a normal question. Nothing is sent or changed without an approval."
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [text], properties: { text: { type: string, maxLength: 500 } } } } } }
+      responses: { '200': { description: "Result: handled, reply text and cards (approval or report)", content: { application/json: { schema: { type: object, properties: { handled: { type: boolean }, reply: { type: string }, cards: { type: array, items: { type: object, additionalProperties: true } } } } } } } }
+  /demo:
+    get: { tags: [ops], summary: Whether demo mode is on (development only; every demo route answers 404 otherwise), responses: { '200': { description: OK }, '404': { $ref: '#/components/responses/Error' } } }
+    delete: { tags: [ops], summary: Remove the demo mailbox and calendar, responses: { '200': { description: OK } } }
+  /demo/seed:
+    post: { tags: [ops], summary: Replace demo data with a fresh sample mailbox and calendar, responses: { '200': { description: OK } } }
+  /demo/inbound:
+    post: { tags: [ops], summary: Simulate a new incoming message in the demo mailbox and run the workflows on it right away, requestBody: { content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { '200': { description: OK } } }
 
 components:
   securitySchemes:

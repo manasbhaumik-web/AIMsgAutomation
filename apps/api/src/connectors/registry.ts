@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ENV, Env } from '../config/env';
+import { DemoCalendarConnector, DemoMailConnector } from './demo.connector';
 import { GoogleCalendarConnector } from './gcal.connector';
 import { GmailConnector } from './gmail.connector';
 import { msOAuth } from './graph';
@@ -44,6 +45,11 @@ export class ConnectorRegistry {
     }
     if (env.WHATSAPP_APP_ID && env.WHATSAPP_APP_SECRET && env.WHATSAPP_CONFIG_ID) {
       this.connectors.set('whatsapp', new WhatsAppConnector({ appId: env.WHATSAPP_APP_ID, appSecret: env.WHATSAPP_APP_SECRET, configId: env.WHATSAPP_CONFIG_ID, verifyToken: env.WHATSAPP_VERIFY_TOKEN, version: env.WHATSAPP_API_VERSION }));
+    }
+    if (env.DEMO_MODE === 'true') {
+      // Development stand-ins (env validation refuses this in production).
+      this.connectors.set('gmail', new DemoMailConnector());
+      this.connectors.set('google_calendar', new DemoCalendarConnector());
     }
     if (env.LINKEDIN_ENABLED === 'true' && env.LINKEDIN_CLIENT_ID && env.LINKEDIN_CLIENT_SECRET) {
       this.connectors.set('linkedin', new LinkedInConnector(new OAuthClient({

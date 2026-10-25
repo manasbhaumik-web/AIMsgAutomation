@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { getJson, sendJson } from './http';
 import { OAuthClient, emailFromIdToken } from './oauth';
 import {
-  ChannelConnector, ConnectResult, ConnectorAccount, FetchFn, NormalizedEvent, ProviderAuthError, ProviderError, RsvpRequest, Subscription, SyncResetError,
+  ChannelConnector, ConnectResult, ConnectorAccount, EventWrite, EventWriteResult, FetchFn, NormalizedEvent, ProviderAuthError, ProviderError, RsvpRequest, Subscription, SyncResetError,
   SyncResult, TokenSet, WebhookRequest, WebhookResult,
 } from './types';
 
@@ -68,6 +68,40 @@ export class GoogleCalendarConnector implements ChannelConnector {
     const status = { accept: 'accepted', decline: 'declined', tentative: 'tentative' }[req.response];
     const attendees = ev.attendees!.map((a) => (a.self ? { ...a, responseStatus: status, ...(req.comment ? { comment: req.comment } : {}) } : a));
     await sendJson(this.f, 'PATCH', `${url}?sendUpdates=all`, tok, { attendees });
+  }
+
+  /** Request body for Google Calendar from the fields the user supplied. Only the fields present are sent, so a patch changes nothing else. */
+  private body(ev: Partial<EventWrite>): Record<string, unknown> {
+    const b: Record<string, unknown> = {};
+    if (ev.title !== undefined) b.summary = ev.title;
+    if (ev.location !== undefined) b.location = ev.location ?? '';
+    if (ev.description !== undefined) b.description = ev.description ?? '';
+    if (ev.start && ev.end) {
+      if (ev.allDay) {
+        b.start = { date: ev.start.toISOString().slice(0, 10) };
+        b.end = { date: ev.end.toISOString().slice(0, 10) };
+      } else {
+        b.start = { dateTime: ev.start.toISOString(), ...(ev.timezone ? { timeZone: ev.timezone } : {}) };
+        b.end = { dateTime: ev.end.toISOString(), ...(ev.timezone ? { timeZone: ev.timezone } : {}) };
+      }
+    }
+    if (ev.attendees) b.attendees = ev.attendees.map((email) => ({ email }));
+    return b;
+  }
+
+  async createEvent(acct: ConnectorAccount, ev: EventWrite): Promise<EventWriteResult> {
+    const made = await sendJson<GEvent>(this.f, 'POST', `${API}/events?sendUpdates=all`, acct.tokens.accessToken, this.body(ev));
+    if (!made?.id) throw new ProviderError('Google did not return the new event', 502);
+    return { externalId: made.id, event: parseGoogleEvent(made) };
+  }
+
+  async updateEvent(acct: ConnectorAccount, externalId: string, patch: Partial<EventWrite>): Promise<EventWriteResult> {
+    const made = await sendJson<GEvent>(this.f, 'PATCH', `${API}/events/${encodeURIComponent(externalId)}?sendUpdates=all`, acct.tokens.accessToken, this.body(patch));
+    return { externalId, event: made ? parseGoogleEvent(made) : null };
+  }
+
+  async cancelEvent(acct: ConnectorAccount, externalId: string): Promise<void> {
+    await sendJson(this.f, 'DELETE', `${API}/events/${encodeURIComponent(externalId)}?sendUpdates=all`, acct.tokens.accessToken);
   }
 
   async handleAuthCallback(a: { code: string; verifier: string; redirectUri: string }): Promise<ConnectResult> {

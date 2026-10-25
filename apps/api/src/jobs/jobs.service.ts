@@ -9,6 +9,7 @@ import { SubscriptionService } from '../ingestion/subscription.service';
 import { MetricsService } from '../observability/metrics.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrivacyService } from '../privacy/privacy.service';
+import { WorkflowEngine } from '../workflows/engine.service';
 import { SyncService } from '../ingestion/sync.service';
 
 const POLL_EVERY_MS = 60_000;
@@ -48,6 +49,7 @@ export class JobsService implements OnModuleInit, OnApplicationShutdown {
     private readonly notifications: NotificationsService,
     private readonly privacy: PrivacyService,
     private readonly metrics: MetricsService,
+    private readonly workflows: WorkflowEngine,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -123,6 +125,8 @@ export class JobsService implements OnModuleInit, OnApplicationShutdown {
       await this.ai.runForAccount(data.accountId!);
       // Notifications read the freshly assigned priorities; a failure here must not make the AI job retry.
       await this.notifications.scan(data.accountId!).catch((e) => this.log.warn(`Notification scan failed: ${(e as Error).message}`));
+      // Workflows start from freshly analysed mail. A failure here must not make the AI job retry.
+      await this.workflows.scanAccount(data.accountId!).catch((e) => this.log.warn(`Workflow scan failed: ${(e as Error).message}`));
     }
     else if (name === 'digest') {
       const r = await this.db.system((c) => c.query('SELECT * FROM sys_user_ctx($1)', [data.userId]));
@@ -156,6 +160,7 @@ export class JobsService implements OnModuleInit, OnApplicationShutdown {
       await this.enqueueDigest(r.user_id, localDate(tz, now));
     }
     if (this.digestQueuedFor.size > 5000) this.digestQueuedFor.clear();
+    await this.workflows.tick(now).catch((e) => this.log.warn(`Workflow tick failed: ${(e as Error).message}`));
   }
 
   /** Hourly retention sweep. With several instances every one may run it; the deletes are idempotent. */

@@ -1,6 +1,9 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Session, api, getSession, login, logout, oidcFinish, oidcStart, register, restore } from './api';
 import { Admin } from './Admin';
+import { Automations } from './Automations';
+import { Preferences } from './Preferences';
+import { Teams } from './Teams';
 import { Calendar } from './Calendar';
 import { Connections } from './Connections';
 import { Inbox } from './Inbox';
@@ -9,8 +12,8 @@ import { Today } from './Today';
 import { AiConsent } from './AiConsent';
 import { NotificationSettings, NotificationsBell } from './Notifications';
 
-type Page = 'inbox' | 'today' | 'assistant' | 'calendar' | 'accounts' | 'admin';
-const LABEL: Record<Page, string> = { inbox: 'Inbox', today: 'Today', assistant: 'Assistant', calendar: 'Calendar', accounts: 'Accounts', admin: 'Admin' };
+type Page = 'inbox' | 'today' | 'assistant' | 'calendar' | 'automations' | 'teams' | 'accounts' | 'admin';
+const LABEL: Record<Page, string> = { inbox: 'Inbox', today: 'Today', assistant: 'Assistant', calendar: 'Calendar', automations: 'Automations', teams: 'Teams', accounts: 'Accounts', admin: 'Admin' };
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -63,23 +66,27 @@ export function App() {
   return (
     <>
       <header className="bar">
-        <strong>Unified Inbox</strong>
-        <nav className="tabs nav">
-          {(['inbox', 'today', 'assistant', 'calendar', 'accounts', ...(getSession()?.user.role === 'admin' ? ['admin'] : [])] as Page[]).map((p) => (
-            <button key={p} className={p === page ? 'active' : ''} onClick={() => { setPage(p); setNotice(''); }}>{LABEL[p]}</button>
+        <span className="brand"><span className="logo" aria-hidden="true"><MailIcon /></span><strong>Unified Inbox</strong></span>
+        <nav className="tabs nav" aria-label="Main">
+          {(['inbox', 'today', 'assistant', 'calendar', 'automations', 'teams', 'accounts', ...(getSession()?.user.role === 'admin' ? ['admin'] : [])] as Page[]).map((p) => (
+            <button key={p} className={p === page ? 'active' : ''} aria-current={p === page ? 'page' : undefined} onClick={() => { setPage(p); setNotice(''); }}>{LABEL[p]}</button>
           ))}
         </nav>
         <NotificationsBell onOpenThread={showThread} />
-        <span className="muted">{session.user.email}</span>
-        <button onClick={async () => { await logout(); setSession(null); }}>Sign out</button>
+        <span className="who">
+          <span className="muted">{session.user.email}</span>
+          <button onClick={async () => { await logout(); setSession(null); }}>Sign out</button>
+        </span>
       </header>
-      <main className={page === 'inbox' ? 'full' : ''}>
+      <main className={page === 'inbox' || page === 'admin' ? 'full' : ''}>
         {notice && <p role="status" className="notice">{notice}</p>}
         {page === 'inbox' && <Inbox openThreadId={openThread} onOpened={() => setOpenThread(null)} />}
         {page === 'today' && <Today onOpenThread={showThread} />}
         {page === 'assistant' && <Assistant onOpenThread={showThread} />}
         {page === 'calendar' && <Calendar />}
-        {page === 'accounts' && (<><AiConsent /><div style={{ height: 16 }} /><Connections /><div style={{ height: 16 }} /><NotificationSettings /></>)}
+        {page === 'automations' && <Automations />}
+        {page === 'teams' && <Teams />}
+        {page === 'accounts' && (<><AiConsent /><div style={{ height: 16 }} /><Connections /><div style={{ height: 16 }} /><NotificationSettings /><div style={{ height: 16 }} /><Preferences /></>)}
         {page === 'admin' && <Admin />}
       </main>
     </>
@@ -112,9 +119,23 @@ function SignIn({ onDone }: { onDone: (s: Session) => void }) {
   }
 
   return (
-    <main className="center">
-      <form className="card" onSubmit={submit}>
-        <h1>{mode === 'login' ? 'Sign in' : 'Create account'}</h1>
+    <div className="signin">
+      <section className="signin-about" aria-label="About">
+        <span className="brand"><span className="logo" aria-hidden="true"><MailIcon /></span><strong>Unified Inbox</strong></span>
+        <div className="signin-copy">
+          <h1>All your messages, one calm place.</h1>
+          <p>Email, calendar and chat in one inbox, with summaries and reply drafts you review before anything is sent.</p>
+          <ul>
+            <li>Gmail, Outlook, Teams, Slack and WhatsApp together</li>
+            <li>Summaries, topics and action items on every thread</li>
+            <li>Nothing is ever sent without your confirmation</li>
+          </ul>
+        </div>
+        <small className="muted">Your data stays yours: AI is off until you turn it on.</small>
+      </section>
+      <main className="signin-form">
+      <form className="signin-card" onSubmit={submit}>
+        <h2>{mode === 'login' ? 'Sign in' : 'Create account'}</h2>
         {mode === 'register' && (
           <label>Name<input id="name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" /></label>
         )}
@@ -134,6 +155,13 @@ function SignIn({ onDone }: { onDone: (s: Session) => void }) {
           {mode === 'login' ? 'Need an account? Create one' : 'Have an account? Sign in'}
         </button>
       </form>
-    </main>
+      </main>
+    </div>
+  );
+}
+
+function MailIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Zm0 1 9 6 9-6" /></svg>
   );
 }

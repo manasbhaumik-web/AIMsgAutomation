@@ -1,10 +1,10 @@
 # Unified Inbox AI Service
 
-Status: **Phase 6 (hardening: privacy rights, retention, observability, OpenAPI + SDK, deployment, security review) built, awaiting approval.** All phases of the brief are now built. Open items are listed in `docs/08-security-review.md` and ADR 0007. Source brief: `unified-inbox-ai-prompt.md` (Downloads). Design: `docs/`.
+Status: **Phase 7 (workflows and approvals, calendar writes, reports, profile, teams; ADR 0008) built, awaiting approval.** Phases 1 to 6 as before. Open items are listed in `docs/08-security-review.md`, ADR 0007 and ADR 0008. Source brief: `unified-inbox-ai-prompt.md` (Downloads). Design: `docs/`.
 
 ## Rules from the brief
 - Work in phases; stop for approval after each. Ask before adding paid services, changing stack, or touching production data.
-- Sending a reply always requires explicit user confirmation. Never auto-send.
+- Sending a reply requires explicit user confirmation. The only exception is the opt-in `auto` autonomy of a workflow (ADR 0008), which is OFF unless the operator sets `AUTO_SEND_ENABLED=true`, the person turns it on in their profile and per channel, and the workflow policy allows it. Never add another path that sends without a confirmation.
 - Retrieval is always scoped to the requesting user. Cross-user leakage is a critical bug.
 - No unofficial WhatsApp/LinkedIn libraries.
 
@@ -15,6 +15,7 @@ NestJS 10 (TypeScript) modular monolith in `apps/api`, Vite + React in `apps/web
 - `apps/api/src/{config,db,crypto,auth,admin,llm,common,health}`; one NestJS module per folder
 - `apps/api/src/ai` (consent, pipeline, retrieval, chat, summaries, digest; README has admin setup), `apps/api/src/llm` (gateway + adapters: anthropic, openai/xai, gemini)
 - `apps/api/src/connectors` (one file per channel, `registry.ts`, `accounts.*`, README with provider setup), `ingestion` (`sync`, `ingestion`, `subscription`, inbox + webhook controllers, `channels.module.ts`), `jobs` (BullMQ or in-process)
+- `apps/api/src/workflows` (schema, engine, approvals), `profile`, `teams`, `reports` (render + service), `calendar` (reads and writes), `demo` (DEMO_MODE only); `common/activity.service.ts` is the user-readable log
 - `apps/api/migrations/NNN_name.sql`: plain SQL, applied in order by `npm run migrate`
 - `apps/web/src`: `App.tsx` (sign-in), `Admin.tsx` (LLM console), `api.ts` (client with refresh)
 - `docs/` design, `docs/08-security-review.md`, `docs/ops-runbook.md`; `docs/decisions/` ADRs; `docker/postgres-init.sql` creates the dev runtime role; `deploy/` production images and Compose; `ops/` Prometheus + Grafana; `load/` k6; `packages/sdk` TypeScript client
@@ -56,4 +57,11 @@ Isolation tests need `TEST_DATABASE_ADMIN_URL` and `TEST_DATABASE_URL`; they are
 - Observability: metrics use fixed low-cardinality labels only (never ids, emails, subjects, URLs). Add a metric in `MetricsService`; dashboards and alerts in `ops/` are tested against the exported names.
 - The OpenAPI file (`apps/api/openapi/openapi.yaml`) is tested against the controllers: add or change a route and update the spec, then `npm run generate -w packages/sdk` (CI fails if `packages/sdk/src/schema.ts` is stale).
 - Rotating the master key: `MASTER_KEY_PREVIOUS` + `npm run rotate-keys -w apps/api` (see `docs/ops-runbook.md`). Run exactly one API instance until rate limiting uses Redis.
+- Workflows (ADR 0008): `ask` is the default autonomy. `auto` sends only a draft written by the same run and only when `autoSendHold` returns null (profile switch, policy channel, per-channel policy, priority, working hours, sender domain, placeholder and length checks, 24-hour caps); otherwise it files an approval. Calendar changes in a workflow always need approval. Approvals are bound to the sha256 of their payload and run once. `DraftService` must never depend on the engine, approvals, replies or a connector.
+- Chat commands (`assistant/commands.ts`, `POST /assistant/command`) are fixed text patterns matched on the server, never model output, and run before the model is asked. They can only build an in-app report, list approvals, or create an approval card (calendar event); the words approve, decline, send and delete are not commands. The AI assistant itself still has no tools.
+- A workflow never acts on mail from before it was switched on (`scan_from`); one run per message or schedule slot (`dedupe_key`).
+- Calendar writes go only through `CalendarActionsService` (`createEvent`, `updateEvent`, `cancelEvent`), need the write scope from connect time, refuse overlaps unless accepted, and are audited.
+- Reports contain subjects, senders, dates and counts, never message bodies, and no AI call. Files are encrypted at rest, expire after 30 days, and spreadsheet cells that start with = + - @ are neutralised.
+- Teams share templates and roles, never data. New team-visible tables must use `team_role()`; per-person tables stay `user_id = app_uid()`.
+- `DEMO_MODE=true` (dev only, refused in production) swaps in demo connectors and enables `/demo/*`. Never rely on it outside development.
 - Shell tip: very long heredocs in the Bash tool can fail on quotes; create files with the editor tools instead.

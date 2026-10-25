@@ -10,7 +10,7 @@
     "test": "npm test -w apps/api && npm test -w packages/sdk",
     "lint": "npm run lint -w apps/api && npm run lint -w apps/web && npm run lint -w packages/sdk && npm run check-generated -w packages/sdk",
     "migrate": "npm run migrate -w apps/api",
-    "verify": "npm run build -w apps/api && node scripts/verify/rls-core.mjs && node scripts/verify/sync-inbox.mjs && node scripts/verify/ai-pipeline.mjs && node scripts/verify/chat-push.mjs && node scripts/verify/actions.mjs && node scripts/verify/privacy.mjs && node scripts/verify/load-seed.mjs"
+    "verify": "npm run build -w apps/api && node scripts/verify/rls-core.mjs && node scripts/verify/sync-inbox.mjs && node scripts/verify/ai-pipeline.mjs && node scripts/verify/chat-push.mjs && node scripts/verify/actions.mjs && node scripts/verify/privacy.mjs && node scripts/verify/workflows.mjs && node scripts/verify/load-seed.mjs"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.10",

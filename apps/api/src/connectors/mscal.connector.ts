@@ -2,7 +2,7 @@ import { sendJson } from './http';
 import { GRAPH, GraphBase, followDelta } from './graph';
 import { OAuthClient } from './oauth';
 import {
-  ChannelConnector, ConnectResult, ConnectorAccount, FetchFn, NormalizedEvent, Party, ProviderError, RsvpRequest, Subscription, SyncResetError, SyncResult,
+  ChannelConnector, ConnectResult, ConnectorAccount, EventWrite, EventWriteResult, FetchFn, NormalizedEvent, Party, ProviderError, RsvpRequest, Subscription, SyncResetError, SyncResult,
   TokenSet, WebhookRequest, WebhookResult,
 } from './types';
 
@@ -60,6 +60,44 @@ export class MicrosoftCalendarConnector implements ChannelConnector {
 
   getAuthUrl(a: { state: string; challenge: string; redirectUri: string; write?: boolean }): string {
     return this.base.authUrl(a, a.write ? ['Calendars.ReadWrite'] : []);
+  }
+
+  /** Graph body from the fields supplied. Times are sent as UTC, matching how events are read back. */
+  private body(ev: Partial<EventWrite>): Record<string, unknown> {
+    const b: Record<string, unknown> = {};
+    const when = (d: Date) => ({ dateTime: d.toISOString().replace(/\.\d{3}Z$/, ''), timeZone: 'UTC' });
+    if (ev.title !== undefined) b.subject = ev.title;
+    if (ev.location !== undefined) b.location = { displayName: ev.location ?? '' };
+    if (ev.description !== undefined) b.body = { contentType: 'text', content: ev.description ?? '' };
+    if (ev.allDay !== undefined) b.isAllDay = ev.allDay;
+    if (ev.start && ev.end) {
+      b.start = when(ev.start);
+      b.end = when(ev.end);
+    }
+    if (ev.attendees) b.attendees = ev.attendees.map((address) => ({ emailAddress: { address }, type: 'required' }));
+    return b;
+  }
+
+  async createEvent(acct: ConnectorAccount, ev: EventWrite): Promise<EventWriteResult> {
+    const made = await sendJson<GraphEvent>(this.f, 'POST', `${GRAPH}/me/events`, acct.tokens.accessToken, this.body(ev));
+    if (!made?.id) throw new ProviderError('Microsoft did not return the new event', 502);
+    return { externalId: made.id, event: parseGraphEvent(made) };
+  }
+
+  async updateEvent(acct: ConnectorAccount, externalId: string, patch: Partial<EventWrite>): Promise<EventWriteResult> {
+    const made = await sendJson<GraphEvent>(this.f, 'PATCH', `${GRAPH}/me/events/${encodeURIComponent(externalId)}`, acct.tokens.accessToken, this.body(patch));
+    return { externalId, event: made?.id ? parseGraphEvent(made) : null };
+  }
+
+  /** `cancel` notifies attendees when the user is the organizer; it fails for events the user only attends, which then fall back to delete. */
+  async cancelEvent(acct: ConnectorAccount, externalId: string): Promise<void> {
+    const url = `${GRAPH}/me/events/${encodeURIComponent(externalId)}`;
+    try {
+      await sendJson(this.f, 'POST', `${url}/cancel`, acct.tokens.accessToken, { comment: '' });
+    } catch (e) {
+      if (!(e instanceof ProviderError) || ![400, 403, 404].includes(e.status)) throw e;
+      await sendJson(this.f, 'DELETE', url, acct.tokens.accessToken);
+    }
   }
 
   async respondToEvent(acct: ConnectorAccount, req: RsvpRequest): Promise<void> {

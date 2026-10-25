@@ -53,6 +53,13 @@ d('row-level security isolation', () => {
       await admin.query(`INSERT INTO notification_prefs(user_id, tenant_id) VALUES ($1,$2)`, [u, t]);
       await admin.query(`INSERT INTO push_devices(tenant_id, user_id, platform, enc_token, token_hash) VALUES ($1,$2,'fcm',decode('00','hex'),$3)`, [t, u, randomUUID()]);
       await admin.query(`INSERT INTO notifications(tenant_id, user_id, kind, ref, thread_id) VALUES ($1,$2,'new_message',$3,$4)`, [t, u, randomUUID(), th]);
+      // Phase 7: profile, workflows, runs, approvals, activity, reports
+      await admin.query(`INSERT INTO user_profiles(user_id, tenant_id) VALUES ($1,$2)`, [u, t]);
+      const wf = (await admin.query(`INSERT INTO workflows(tenant_id, user_id, name, trigger, actions) VALUES ($1,$2,'w','{"type":"manual"}','[{"type":"generate_report"}]') RETURNING id`, [t, u])).rows[0].id;
+      const run = (await admin.query(`INSERT INTO workflow_runs(tenant_id, user_id, workflow_id, trigger_type, dedupe_key) VALUES ($1,$2,$3,'manual','k1') RETURNING id`, [t, u, wf])).rows[0].id;
+      await admin.query(`INSERT INTO approvals(tenant_id, user_id, workflow_id, run_id, kind, summary, payload, payload_hash) VALUES ($1,$2,$3,$4,'send_reply','s','{}','h')`, [t, u, wf, run]);
+      await admin.query(`INSERT INTO activity_log(tenant_id, user_id, actor, kind, summary) VALUES ($1,$2,'user','x','y')`, [t, u]);
+      await admin.query(`INSERT INTO reports(tenant_id, user_id, title, kind, format, size_bytes, sha256, enc_body) VALUES ($1,$2,'r','weekly','pdf',1,'h',decode('00','hex'))`, [t, u]);
     }
   });
 
@@ -248,6 +255,42 @@ d('row-level security isolation', () => {
     await expect(as(alice(), 'SELECT sys_delete_user($1)', [ids.b])).rejects.toThrow(/not allowed/);
     await expect(as(alice(), 'SELECT * FROM sys_user_audit($1)', [ids.b])).rejects.toThrow(/not allowed/);
     expect((await admin.query('SELECT count(*)::int AS n FROM users WHERE id = $1', [ids.b])).rows[0].n).toBe(1);
+  });
+
+  const PHASE7_TABLES = ['user_profiles', 'workflows', 'workflow_runs', 'approvals', 'activity_log', 'reports'];
+
+  it.each(PHASE7_TABLES)('Phase 7 table %s: no context -> zero rows; a user sees only their own', async (table) => {
+    expect((await as({}, `SELECT * FROM ${table}`)).rows).toHaveLength(0);
+    const rows = (await as(alice(), `SELECT user_id FROM ${table}`)).rows;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.user_id === ids.a)).toBe(true);
+  });
+
+  it('a user cannot plant or change workflows, approvals, reports or preferences for someone else', async () => {
+    await expect(as(alice(), `INSERT INTO workflows(tenant_id, user_id, name, trigger, actions) VALUES ($1,$2,'x','{"type":"manual"}','[{"type":"generate_report"}]')`, [ids.tb, ids.b])).rejects.toThrow(/row-level security/);
+    expect((await as(alice(), `UPDATE approvals SET status = 'executed' WHERE user_id = $1`, [ids.b])).rowCount).toBe(0);
+    expect((await as(alice(), `DELETE FROM reports WHERE user_id = $1`, [ids.b])).rowCount).toBe(0);
+    expect((await as(alice(), `UPDATE user_profiles SET auto_replies_enabled = true WHERE user_id = $1`, [ids.b])).rowCount).toBe(0);
+  });
+
+  it('teams: only members see a team; nobody can add themselves; an invitation cannot be taken by another address', async () => {
+    const team = (await as(alice(), 'SELECT create_team($1) AS id', ['Team A'])).rows[0].id;
+    const bob = () => ({ userId: ids.b, tenantId: ids.tb, role: 'user' as const, tenantRole: 'tenant_admin' as const });
+    expect((await as(bob(), 'SELECT * FROM teams WHERE id = $1', [team])).rows).toHaveLength(0);
+    expect((await as(bob(), 'SELECT * FROM team_members WHERE team_id = $1', [team])).rows).toHaveLength(0);
+    expect((await as(bob(), 'SELECT * FROM team_roster($1)', [team])).rows).toHaveLength(0);
+    await expect(as(bob(), `INSERT INTO team_members(team_id, user_id, role) VALUES ($1,$2,'owner')`, [team, ids.b])).rejects.toThrow(/permission denied|row-level security/);
+    await expect(as(bob(), `INSERT INTO team_invites(team_id, email, role, invited_by) VALUES ($1,'x@y.z','member',$2)`, [team, ids.b])).rejects.toThrow(/row-level security/);
+    const inv = (await as(alice(), `INSERT INTO team_invites(team_id, email, role, invited_by) VALUES ($1,'someone-else@test.local','member',$2) RETURNING id`, [team, ids.a])).rows[0].id;
+    expect((await as(bob(), 'SELECT accept_team_invite($1) AS id', [inv])).rows[0].id).toBeNull();
+    expect((await as(bob(), 'SELECT * FROM team_invites WHERE id = $1', [inv])).rows).toHaveLength(0);
+    expect((await as({}, 'SELECT * FROM teams')).rows).toHaveLength(0);
+  });
+
+  it('the Phase 7 worker functions and team helpers are not callable by PUBLIC', async () => {
+    for (const fn of ['sys_users_with_schedules()', 'sys_expire_approvals()', 'sys_purge_reports()', 'create_team(text)', 'accept_team_invite(uuid)', 'team_roster(uuid)', 'my_team_invites()']) {
+      expect((await admin.query(`SELECT has_function_privilege('public', '${fn}', 'EXECUTE') AS p`)).rows[0].p).toBe(false);
+    }
   });
 
   it('context does not leak between pooled connections', async () => {

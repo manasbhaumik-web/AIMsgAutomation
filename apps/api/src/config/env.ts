@@ -55,7 +55,14 @@ const schema = z.object({
   /** Without Redis, jobs run in-process (fine for development, not for several instances). */
   REDIS_URL: z.string().optional(),
   WORKERS_ENABLED: z.enum(['true', 'false']).default('true'),
+  /** Development only: replaces Gmail and Google Calendar with stand-ins and enables the demo data endpoint. Refused in production. */
+  DEMO_MODE: z.enum(['true', 'false']).default('false'),
+  /** Operator switch for workflows that send without a click (autonomy 'auto'). Off by default: with it off, every such workflow files an approval instead. */
+  AUTO_SEND_ENABLED: z.enum(['true', 'false']).default('false'),
+  /** Report file size limit in MB. */
+  REPORT_MAX_MB: z.coerce.number().min(1).max(50).default(10),
 }).superRefine((e, ctx) => {
+  if (e.NODE_ENV === 'production' && e.DEMO_MODE === 'true') ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['DEMO_MODE'], message: 'must be off in production: it replaces the real mail and calendar connectors' });
   if (e.NODE_ENV !== 'production') return;
   const bad = (path: string, message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
   // Misconfigurations that would silently weaken the security model are refused at startup, not logged.
